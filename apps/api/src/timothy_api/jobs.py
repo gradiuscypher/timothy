@@ -1,9 +1,8 @@
 """Enqueuing the enforcement work a mutation implies.
 
 Creating a listing enqueues enforcement (ADR 0004); removing one with `revert` set
-enqueues a revert (ADR 0005). Phase 2 writes those rows and phase 3 drains them, so
-until phase 3 lands the queue simply accumulates — which is the correct backlog for the
-worker to start on.
+enqueues a revert (ADR 0005). :mod:`timothy_api.enforcement.handlers` is what drains
+these, one function per kind.
 
 Enqueuing happens in the mutation's own transaction. A job committed separately from the
 change that justifies it is a job that can be lost after the change lands, or run before
@@ -23,7 +22,7 @@ from timothy_core.db.models import Job
 
 
 class JobKind(StrEnum):
-    """The work a mutation can imply. Phase 3 owns what each one does."""
+    """The work a mutation can imply."""
 
     ENFORCE_LISTING = "enforce_listing"
     """`{listing_id}` — a listing appeared. Reaches every guild subscribing to its pool."""
@@ -49,6 +48,10 @@ class JobKind(StrEnum):
 
     REVERT_POOL = "revert_pool"
     """`{pool_id}` — a pool was deleted and the caller asked for a revert."""
+
+    REVERT_GUILD_USER = "revert_guild_user"
+    """`{guild_id, user_id}` — a guild vouched for someone Timothy had already banned
+    there, and asked for that ban back."""
 
 
 def enqueue(session: AsyncSession, kind: JobKind, **payload: int) -> Job:

@@ -19,6 +19,12 @@ from .conftest import (
     headers,
 )
 
+ENFORCEMENT_ACTIONS = {
+    action.value for action in AuditAction if action.value.startswith("enforcement.")
+}
+"""What the worker writes, not what a request does. Nobody can provoke these through the
+CRUD surface — enforcement is queued, and the tests that drive it live elsewhere."""
+
 
 def actions(client: TestClient) -> list[str]:
     entries = client.get("/audit-log", headers=headers(POOL_ADMIN)).json()
@@ -81,7 +87,7 @@ def test_every_mutation_leaves_a_line(pool: TestClient) -> None:
     pool.delete("/pools/spam", headers=headers(POOL_ADMIN))
     pool.delete(f"/guilds/{GUILD}", headers=headers("system"))
 
-    assert set(actions(pool)) == {action.value for action in AuditAction}
+    assert set(actions(pool)) == {action.value for action in AuditAction} - ENFORCEMENT_ACTIONS
 
 
 def test_a_refused_call_records_nothing(pool: TestClient) -> None:

@@ -78,16 +78,19 @@ def test_a_caller_with_nothing_resolved_is_refused_everything() -> None:
     assert not any(allows(operation, context) for operation in Operation)
 
 
+SYSTEMS_OWN = {Operation.REGISTER_GUILD, Operation.RELAY_EVENT}
+"""The two things that follow from Discord telling Timothy something, rather than from
+anyone asking: the bot joining or leaving a guild, and a gateway event."""
+
+
 def test_the_system_actor_may_only_do_its_own_work() -> None:
     """Timothy has no Discord permissions to derive authority from, so standing in for a
     human would be a bypass of the model rather than an application of it."""
     context = PermissionContext(actor=SYSTEM)
 
-    assert allows(Operation.REGISTER_GUILD, context)
+    assert all(allows(operation, context) for operation in SYSTEMS_OWN)
     assert not any(
-        allows(operation, context)
-        for operation in Operation
-        if operation is not Operation.REGISTER_GUILD
+        allows(operation, context) for operation in Operation if operation not in SYSTEMS_OWN
     )
 
 

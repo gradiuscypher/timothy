@@ -219,7 +219,8 @@ class EnforcementOutcome(Base):
 class Job(Base):
     """A unit of enforcement work waiting for a worker.
 
-    Phase 3 owns the worker loop; the table lands here with the rest of the schema.
+    Written in the same transaction as the mutation that justifies it, so it cannot be
+    committed without that mutation or run before it.
     """
 
     __tablename__ = "jobs"
@@ -234,6 +235,10 @@ class Job(Base):
         _enum(JobStatus, "job_status"),
         default=JobStatus.PENDING,
     )
+    last_error: Mapped[str | None] = mapped_column(default=None)
+    """Why the most recent attempt failed. A job that has exhausted its attempts is the
+    one an operator has to be able to read without turning on debug logging."""
+
     created_at: Mapped[CreatedAt]
 
 

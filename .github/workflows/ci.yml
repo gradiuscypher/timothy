@@ -83,14 +83,66 @@ jobs:
             wget -qS -O /dev/null http://127.0.0.1/api/pools 2>&1 | grep -q "401 Unauthorized"
           '
 
-      - name: The backend migrated its own database on startup
+      - name: The backend migrated its own database to head on startup
         run: |
           docker compose exec -T backend python -c "
           import sqlite3, sys
-          tables = {r[0] for r in sqlite3.connect('/data/timothy.db').execute(
+          db = sqlite3.connect('/data/timothy.db')
+          tables = {r[0] for r in db.execute(
               \"SELECT name FROM sqlite_master WHERE type='table'\")}
-          sys.exit(0 if {'pools', 'listings', 'alembic_version'} <= tables else 1)
+          columns = {r[1] for r in db.execute('PRAGMA table_info(jobs)')}
+          sys.exit(0 if {'pools', 'listings', 'alembic_version'} <= tables
+                   and 'last_error' in columns else 1)
           "
+
+      # The settings are parsed from compose's own values here, which is what the unit
+      # tests cannot do: a duration written as plain seconds once passed every test and
+      # still stopped the container from starting.
+      - name: The enforcement worker and sweep scheduler are running
+        run: |
+          docker compose logs backend | grep -q 'starting enforcement worker and sweep scheduler'
+
+      - name: A relayed gateway event is closed to callers without the internal token
+        run: |
+          docker compose exec -T web sh -c '
+            wget -qS -O /dev/null --post-data="{}" \
+              --header="Content-Type: application/json" \
+              http://127.0.0.1/api/events/member-join 2>&1 | grep -q "401 Unauthorized"
+          '
+
+      # Registering a guild is the one mutation that needs no Discord call, so it is the
+      # only end-to-end exercise of the queue available without a real bot token.
+      - name: A restart sweeps the guilds it knows about, and the worker drains it
+        run: |
+          docker compose exec -T backend python -c "
+          import urllib.request
+          urllib.request.urlopen(urllib.request.Request(
+              'http://localhost:8000/guilds/123456789012345678', method='PUT',
+              headers={'Authorization': 'Bearer ci-placeholder',
+                       'X-Timothy-Actor': 'system'}))
+          "
+          docker compose restart backend
+          docker compose up --wait --wait-timeout 60 backend
+          sleep 5
+          docker compose exec -T backend python -c "
+          import sqlite3, sys
+          rows = list(sqlite3.connect('/data/timothy.db').execute(
+              'SELECT kind, status FROM jobs'))
+          print(rows)
+          sys.exit(0 if ('enforce_guild', 'done') in rows else 1)
+          "
+
+      # The loops are asked to stop rather than cancelled, because a task cancelled
+      # part-way through a transaction cannot finish closing its session and the
+      # connection then outlives the engine. A dirty exit code is how that shows up.
+      - name: The backend shuts its workers down cleanly
+        run: |
+          docker compose stop backend
+          test "$(docker inspect -f '{{.State.ExitCode}}' "$(docker compose ps -aq backend)")" = "0"
+          docker compose logs backend | grep -q 'Application shutdown complete'
+          ! docker compose logs backend | grep -qE 'Task exception was never retrieved|ResourceWarning'
+          docker compose start backend
+          docker compose up --wait --wait-timeout 60 backend
 
       - name: The bot reached the backend
         run: docker compose logs bot | grep -q 'backend reachable'

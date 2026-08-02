@@ -39,7 +39,9 @@ class Operation(StrEnum):
     MANAGE_GUILD_ENFORCEMENT = "manage_guild_enforcement"
     READ_GUILD = "read_guild"
     READ_AUDIT_LOG = "read_audit_log"
+    READ_ENFORCEMENT = "read_enforcement"
     REGISTER_GUILD = "register_guild"
+    RELAY_EVENT = "relay_event"
 
 
 class Requirement(StrEnum):
@@ -71,7 +73,13 @@ REQUIREMENTS: Final[Mapping[Operation, Requirement]] = {
     Operation.MANAGE_NOTIFICATION_CHANNEL: Requirement.TARGET_GUILD_ADMIN,
     Operation.MANAGE_GUILD_ENFORCEMENT: Requirement.TARGET_GUILD_ADMIN,
     Operation.READ_GUILD: Requirement.TARGET_GUILD_ADMIN,
+    Operation.READ_ENFORCEMENT: Requirement.TARGET_GUILD_ADMIN,
     Operation.REGISTER_GUILD: Requirement.SYSTEM,
+    # A gateway event is something that happened, not something anyone asked for. There
+    # is no human behind `GUILD_MEMBER_ADD` to derive authority from, and the exception
+    # ADR 0006 may create from an unban is Timothy's own — which is exactly why it must
+    # not go through the administrator-only exceptions route.
+    Operation.RELAY_EVENT: Requirement.SYSTEM,
 }
 
 

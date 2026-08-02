@@ -55,3 +55,46 @@ def test_nothing_is_configured_open_by_default() -> None:
 
 def test_secrets_do_not_leak_into_a_repr() -> None:
     assert "hunter2" not in repr(Settings(internal_token="hunter2", discord_token="hunter2"))
+
+
+def test_a_duration_may_be_plain_seconds() -> None:
+    """The form `compose.yaml` and `.env.example` document, and the form compose defaults
+    to. Pydantic's own `timedelta` parsing rejects it, so without the `Duration` validator
+    the documented configuration stops the backend from starting."""
+    settings = Settings(
+        permission_cache_ttl="60",
+        sweep_interval="3600",
+        job_poll_interval="1",
+    )
+
+    assert settings.permission_cache_ttl == timedelta(seconds=60)
+    assert settings.sweep_interval == timedelta(hours=1)
+    assert settings.job_poll_interval == timedelta(seconds=1)
+
+
+def test_a_duration_may_still_be_iso_8601() -> None:
+    """The other half of what the documentation promises."""
+    assert Settings(sweep_interval="PT90M").sweep_interval == timedelta(minutes=90)
+
+
+def test_the_whole_compose_environment_starts_the_process() -> None:
+    """Every default `compose.yaml` supplies, parsed together. This is the check that was
+    missing when the duration bug shipped: each setting was tested, the file they are
+    written in was not."""
+    settings = Settings(
+        database_url="sqlite+aiosqlite:////data/timothy.db",
+        discord_token="x",
+        internal_token="x",
+        management_guild_id="1",
+        dry_run="true",
+        auto_subscribe_pool="global",
+        permission_cache_ttl="60",
+        sweep_interval="3600",
+        enforcement_burst_limit="25",
+        workers_enabled="true",
+        job_poll_interval="1",
+        job_max_attempts="5",
+    )
+
+    assert settings.sweep_interval == timedelta(hours=1)
+    assert settings.workers_enabled is True

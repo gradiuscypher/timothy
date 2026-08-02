@@ -6,14 +6,14 @@ an exception says will never happen here.
 
 The exception Timothy creates for itself after a moderator's manual unban is not this
 route. That one follows a gateway event, decides through
-:func:`timothy_core.enforcement.decisions.should_except_after_unban`, and belongs to the
-event handling in phase 3. This route is for a human asking directly, and a human needs
-`ADMINISTRATOR` in the guild.
+:func:`timothy_core.enforcement.decisions.should_except_after_unban`, and lives in
+:mod:`timothy_api.routers.events`. This route is for a human asking directly, and a human
+needs `ADMINISTRATOR` in the guild.
 """
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, status
+from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy import select
 
 from timothy_api import audit, jobs
@@ -30,6 +30,16 @@ Manager = Annotated[Actor, Depends(Requires(Operation.MANAGE_EXCEPTIONS))]
 
 GuildId = Annotated[Snowflake, Path(description="A Discord guild ID.")]
 UserId = Annotated[Snowflake, Path(description="A Discord user ID.")]
+Revert = Annotated[
+    bool,
+    Query(
+        description=(
+            "Also lift the ban Timothy has already issued this user here, if it issued "
+            "one. Off by default, like every other revert (ADR 0005): an exception is "
+            "read as 'from now on', and only bans with a recorded outcome are touched."
+        )
+    ),
+]
 
 
 @router.get("")
@@ -53,13 +63,18 @@ async def create_exception(
     body: ExceptionCreate,
     actor: Manager,
     session: SessionDep,
+    *,
+    revert: Revert = False,
 ) -> ExceptionRead:
     """Vouch for a user in this guild.
 
-    Enqueues nothing. Whether an exception should lift a ban Timothy has *already*
-    issued is a real question and an open one — it is a revert, and reverts are ADR
-    0005's territory, so it belongs with the rest of the revert paths in phase 3 rather
-    than being settled by implication here.
+    Whether an exception lifts a ban Timothy has *already* issued was left open by phase
+    2, and this is the answer: it does, but only when asked. That keeps every revert in
+    the codebase the same shape — opt-in, defaulting off, and never touching a ban
+    without a recorded outcome (ADR 0005). Creating an exception silently would make it
+    the one action that unbans people as a side effect, and the flow a moderator actually
+    has for "let this person back in" is the unban itself, which ADR 0006's hook already
+    turns into an exception.
     """
     await get_guild(session, guild_id)
     if await session.get(GuildException, (guild_id, user_id)) is not None:
@@ -74,12 +89,20 @@ async def create_exception(
     session.add(exception)
     await session.flush()
 
+    if revert:
+        jobs.enqueue(
+            session,
+            jobs.JobKind.REVERT_GUILD_USER,
+            guild_id=guild_id,
+            user_id=user_id,
+        )
+
     audit.record(
         session,
         actor=actor,
         action=audit.AuditAction.EXCEPTION_CREATE,
         target=audit.guild_user_target(guild_id=guild_id, user_id=user_id),
-        detail={"reason": body.reason},
+        detail={"reason": body.reason, "revert": revert},
     )
     await session.commit()
     return ExceptionRead.of(exception)

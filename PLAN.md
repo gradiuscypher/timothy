@@ -63,6 +63,9 @@ special cases.
 | `ENFORCEMENT_BURST_LIMIT` | `25` | Bans in one guild in one run before the breaker trips. Runtime-adjustable, not a redeploy. |
 | `SWEEP_INTERVAL` | `1h` | Staggered across guilds. Hourly over daily: if a sweep catches a miss, an hour of exposure is tolerable and a day is not. |
 | `PERMISSION_CACHE_TTL` | `60s` | |
+| `WORKERS_ENABLED` | `true` | The worker and sweep scheduler run inside the backend. Off leaves the API serving and the queue accumulating. |
+| `JOB_POLL_INTERVAL` | `1s` | How long the worker waits on an empty queue — the floor on how immediate "immediate" is. |
+| `JOB_MAX_ATTEMPTS` | `5` | Attempts before a job is abandoned as `failed`, with the reason in `jobs.last_error`. Per-guild failures are recorded as enforcement outcomes and retried by the sweep instead. |
 | OAuth scopes | `identify guilds` | `guilds` so the UI can list the user's guilds directly; authority still resolved server-side. |
 
 ## Layout
@@ -98,7 +101,7 @@ enforcement_outcomes  guild_id, user_id, pool_id, status, reason, attempted_at
                         UNIQUE (guild_id, user_id, pool_id)
                         — durable; makes a ban attributable and revertable,
                           and is the record that keeps warnings to one per user
-jobs                  id, kind, payload, run_after, attempts, status
+jobs                  id, kind, payload, run_after, attempts, status, last_error
 sessions              id PK, user_id, created_at, expires_at
 audit_log             id, actor, action, target, detail, at
 ```

@@ -39,6 +39,19 @@ class AuditAction(StrEnum):
     GUILD_DEREGISTER = "guild.deregister"
     GUILD_ENFORCEMENT_SET = "guild.enforcement_set"
 
+    # Timothy's own actions. The audit log covers these too (CONTEXT.md) — they are the
+    # ones nobody typed, and so the ones a moderator most needs to be able to look up.
+    ENFORCEMENT_BAN = "enforcement.ban"
+    ENFORCEMENT_WARN = "enforcement.warn"
+    ENFORCEMENT_FAILED = "enforcement.failed"
+    ENFORCEMENT_REVERT = "enforcement.revert"
+    ENFORCEMENT_BREAKER_TRIPPED = "enforcement.breaker_tripped"
+
+    ENFORCEMENT_DRY_RUN = "enforcement.dry_run"
+    """What Timothy *would* have done. In dry run this is the only record there is — the
+    durable `enforcement_outcomes` stay empty, because an outcome is an attribution
+    claim and nothing was attributable. Phase 5 diffs these against the old bot."""
+
 
 def pool_target(name: str) -> str:
     """`pool:<name>` — named, not numbered, because the name is what a human searched for."""

@@ -20,6 +20,7 @@ from pydantic import (
 
 from timothy_core.db.models import (
     AuditLogEntry,
+    EnforcementOutcome,
     Guild,
     GuildException,
     Listing,
@@ -27,7 +28,7 @@ from timothy_core.db.models import (
     Pool,
     Subscription,
 )
-from timothy_core.enums import SubscriptionLevel
+from timothy_core.enums import OutcomeStatus, SubscriptionLevel
 
 SNOWFLAKE_PATTERN = r"^\d{1,20}$"
 
@@ -240,6 +241,56 @@ class NotificationChannelSet(BaseModel):
     """Point a guild's notifications at a channel."""
 
     channel_id: Snowflake
+
+
+class EnforcementOutcomeRead(BaseModel):
+    """What Timothy did about one listing in one guild, and when.
+
+    Durable state rather than a log (ADR 0005): this is the record that makes a ban
+    attributable to Timothy, and so the record that makes reverting it safe.
+    """
+
+    guild_id: Snowflake
+    user_id: Snowflake
+    pool_id: int
+    status: OutcomeStatus
+    reason: str | None
+    attempted_at: datetime
+
+    @classmethod
+    def of(cls, outcome: EnforcementOutcome) -> Self:
+        """Render a stored outcome."""
+        return cls.model_validate(
+            {
+                "guild_id": outcome.guild_id,
+                "user_id": outcome.user_id,
+                "pool_id": outcome.pool_id,
+                "status": outcome.status,
+                "reason": outcome.reason,
+                "attempted_at": outcome.attempted_at,
+            }
+        )
+
+
+class GatewayEvent(BaseModel):
+    """Something that happened on the gateway, relayed by the bot.
+
+    The bot has no domain logic (PLAN.md) — it says what Discord told it and nothing
+    about what should follow.
+    """
+
+    guild_id: Snowflake
+    user_id: Snowflake
+
+
+class EventAck(BaseModel):
+    """What the backend did with a relayed event.
+
+    Reported rather than silent so the bot can log it, and so an operator watching a
+    manual unban can see whether the auto-exception fired or was suppressed.
+    """
+
+    action: str
 
 
 class AuditLogRead(BaseModel):

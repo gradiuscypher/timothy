@@ -66,7 +66,16 @@ ignore = [
     "EM102",
     "TRY003",
 ]
+"apps/api/src/timothy_api/routers/**" = [
+    # A FastAPI handler declares its dependencies as parameters, so the argument count
+    # measures how much is injected rather than how much the reader has to hold.
+    "PLR0913",
+]
 "**/tests/**" = [
+    # A pytest fixture is requested by name, so one that exists only for its side effect
+    # — a migrated database, a registered guild, a pool that already exists — reads as an
+    # unused argument. Renaming it to `_pool` would stop pytest finding it.
+    "ARG001",
     "S101",    # assert — that is what tests are made of
     "S105",    # hardcoded-password-string — fixtures, not secrets
     "S106",    # hardcoded-password-func-arg

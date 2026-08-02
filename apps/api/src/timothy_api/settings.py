@@ -2,10 +2,12 @@
 
 Every setting in PLAN.md's Configuration table lives here, under the `TIMOTHY_` prefix
 phase 0 established — `MANAGEMENT_GUILD_ID` is `TIMOTHY_MANAGEMENT_GUILD_ID`, and so on.
-Not all of them are read yet: `dry_run`, `enforcement_burst_limit` and `sweep_interval`
-are ADR 0007's rails and belong to the enforcement worker in phase 3. They are declared
-now so the container's configuration surface is complete and stable, and so `dry_run`'s
-fail-safe parsing is settled before anything can be harmed by getting it wrong.
+
+Two of the types here exist because of how they fail rather than how they parse.
+`FailSafeFlag` reads anything it does not recognise as *on*, so a typo in `DRY_RUN` stops
+Timothy acting rather than starting it. `Duration` accepts the plain seconds that
+`compose.yaml` and `.env.example` have always documented; without it those documented
+values stop the backend from starting at all.
 """
 
 from datetime import timedelta
@@ -35,6 +37,32 @@ def _fail_safe_true(value: object) -> bool:
 
 
 FailSafeFlag = Annotated[bool, BeforeValidator(_fail_safe_true)]
+
+
+def _seconds_or_iso(value: object) -> object:
+    """Read a duration written as a plain number of seconds.
+
+    `.env.example` and `compose.yaml` have always documented these as "seconds, or ISO
+    8601", and `TIMOTHY_SWEEP_INTERVAL=3600` is the value compose defaults to. Pydantic's
+    own `timedelta` parsing rejects a bare number in a string, so without this the
+    documented configuration stops the backend from starting at all — which is how it was
+    found: by running the stack rather than by reading it.
+
+    Anything that is not a bare number is handed on untouched, so `PT1H` and `01:00:00`
+    still parse as they did.
+    """
+    if isinstance(value, str):
+        try:
+            return timedelta(seconds=float(value.strip()))
+        except ValueError:
+            return value
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return timedelta(seconds=value)
+    return value
+
+
+Duration = Annotated[timedelta, BeforeValidator(_seconds_or_iso)]
+"""A `timedelta` that also accepts a plain number of seconds, in either direction."""
 
 
 class Settings(BaseSettings):
@@ -71,7 +99,7 @@ class Settings(BaseSettings):
     unconfigured, and nobody holds `ADMINISTRATOR` in guild zero, so pool management is
     closed until it is set."""
 
-    permission_cache_ttl: timedelta = timedelta(seconds=60)
+    permission_cache_ttl: Duration = timedelta(seconds=60)
 
     auto_subscribe_pool: str = "global"
     """The pool a guild is subscribed to when Timothy joins it (ADR 0002).
@@ -81,8 +109,35 @@ class Settings(BaseSettings):
     is the whole point of that ADR. Empty disables the behaviour.
     """
 
-    # -- domain, read by phase 3 ---------------------------------------------
+    # -- enforcement ---------------------------------------------------------
 
     dry_run: FailSafeFlag = True
+    """Record every enforcement, issue nothing to Discord (ADR 0007).
+
+    Dry run writes to the audit log and deliberately **not** to `enforcement_outcomes`:
+    an outcome is an attribution claim that reverting acts on, and a `banned` row for a
+    ban that was never issued would have Timothy unban a user it never touched. See
+    :mod:`timothy_api.enforcement.engine`.
+    """
+
     enforcement_burst_limit: int = Field(default=25, gt=0)
-    sweep_interval: timedelta = timedelta(hours=1)
+    sweep_interval: Duration = timedelta(hours=1)
+
+    # -- the worker's own machinery ------------------------------------------
+
+    workers_enabled: bool = True
+    """Whether the lifespan starts the job worker and the sweep scheduler.
+
+    On in production — the backend is where enforcement runs (ADR 0003). Off in most
+    tests, which drive :meth:`~timothy_api.enforcement.worker.Worker.run_once` directly
+    so that what ran, and when, is not a matter of timing.
+    """
+
+    job_poll_interval: Duration = timedelta(seconds=1)
+    """How long the worker waits after finding the queue empty. Enforcement is
+    immediate (ADR 0004), so this is the floor on how immediate."""
+
+    job_max_attempts: int = Field(default=5, gt=0)
+    """Attempts before a job is abandoned as `failed`. Per-guild failures are recorded
+    as enforcement outcomes and retried by the sweep instead, so reaching this means the
+    job itself could not run at all."""

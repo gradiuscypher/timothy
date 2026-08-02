@@ -1,15 +1,22 @@
 """FastAPI application factory.
 
 Everything the process needs is built once in the lifespan and hung on `app.state`: the
-engine, the Discord port, and the permission cache in front of it. The port is injectable
-because the tests drive the whole API against
+engine, the Discord port, the permission cache in front of it, and the enforcement
+machinery. The port is injectable because the tests drive the whole API against
 :class:`~timothy_core.ports.fake.FakeDiscord` — ADR 0007's point is that authorization
 and enforcement are testable at full speed with no network, and that only holds if the
 application object can be handed a different Discord.
+
+The worker and the sweep scheduler run here, in the API's own process and on its event
+loop (ADR 0003). They are background tasks of the lifespan, so they start after the
+migrations and are cancelled before the engine is disposed. `TIMOTHY_WORKERS_ENABLED`
+turns them off, which is how most tests get a queue that only moves when they say so.
 """
 
+import asyncio
+import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Literal
 
 from fastapi import Depends, FastAPI
@@ -18,10 +25,13 @@ from pydantic import BaseModel
 from timothy_api import __version__, errors, routers
 from timothy_api.db import Database
 from timothy_api.discord_adapter import DiscordAdapter
+from timothy_api.enforcement import Enforcer, JobContext, SelfUnbans, Sweeper, Worker
 from timothy_api.identity import require_service_token
 from timothy_api.permissions import PermissionResolver
 from timothy_api.settings import Settings
 from timothy_core.ports.discord import DiscordPort
+
+log = logging.getLogger(__name__)
 
 DESCRIPTION = """\
 Shared moderation service for Discord.
@@ -40,6 +50,47 @@ class Health(BaseModel):
 
     status: Literal["ok"]
     version: str
+
+
+SHUTDOWN_GRACE = 10.0
+"""Seconds to let the worker finish the job it is on before cancelling it.
+
+Long enough for a fan-out mid-flight, short enough that a wedged handler cannot hold a
+container up past a deployment.
+"""
+
+
+def _start_background(app: FastAPI) -> list[asyncio.Task[None]]:
+    """Put the worker and the sweep scheduler on the loop.
+
+    Named tasks, so a traceback says which one died.
+    """
+    worker: Worker = app.state.worker
+    sweeper: Sweeper = app.state.sweeper
+    log.info("starting enforcement worker and sweep scheduler")
+    return [
+        asyncio.create_task(worker.run_forever(), name="timothy-worker"),
+        asyncio.create_task(sweeper.run_forever(), name="timothy-sweeper"),
+    ]
+
+
+async def _stop_background(app: FastAPI, tasks: list[asyncio.Task[None]]) -> None:
+    """Ask the loops to finish, and only cancel if they will not.
+
+    Asked rather than cancelled: a task cancelled part-way through a transaction cannot
+    finish closing its session, and the connection then outlives the engine it came from.
+    See :mod:`timothy_api.enforcement.pacing`.
+    """
+    app.state.worker.stop()
+    app.state.sweeper.stop()
+
+    _, pending = await asyncio.wait(tasks, timeout=SHUTDOWN_GRACE)
+    for task in pending:
+        log.warning("%s did not stop in time; cancelling", task.get_name())
+        task.cancel()
+    for task in pending:
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 def create_app(
@@ -70,14 +121,25 @@ def create_app(
         if port is None:
             port = DiscordAdapter.create(resolved.discord_token.get_secret_value())
 
+        self_unbans = SelfUnbans()
+        enforcer = Enforcer(discord=port, settings=resolved, self_unbans=self_unbans)
+        context = JobContext(sessions=database.sessions, enforcer=enforcer, settings=resolved)
+
         app.state.settings = resolved
         app.state.db = database
         app.state.discord = port
         app.state.resolver = PermissionResolver(port, ttl=resolved.permission_cache_ttl)
+        app.state.self_unbans = self_unbans
+        app.state.enforcer = enforcer
+        app.state.worker = Worker(context)
+        app.state.sweeper = Sweeper(database.sessions, resolved)
 
+        background = _start_background(app) if resolved.workers_enabled else []
         try:
             yield
         finally:
+            if background:
+                await _stop_background(app, background)
             await database.dispose()
             if isinstance(port, DiscordAdapter):
                 await port.close()

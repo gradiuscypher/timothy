@@ -1,0 +1,391 @@
+"""Doing what was decided, behind ADR 0007's three rails.
+
+`decide()` says ban, warn or skip. This turns that into a Discord call and a durable
+record of what happened, and it is where dry run, the circuit breaker and the per-guild
+pause actually bite.
+
+Three orderings here are load-bearing:
+
+**Discord first, then the record.** A ban is issued and only then recorded. Crashing in
+between loses the attribution, which makes a later revert refuse to lift a ban it really
+did cause — conservative, and recoverable by hand. The other order loses in the
+dangerous direction: a `banned` row for a ban that was never issued has Timothy unban a
+user it never touched, which is precisely what ADR 0005 forbids.
+
+**Dry run records to the audit log, not to `enforcement_outcomes`.** CONTEXT.md says dry
+run "records every enforcement it would perform", and phase 5 rehearses against
+production data with it on. But an outcome row is an attribution claim, not a note —
+writing `banned` for a ban that never happened would arm the revert path against
+imaginary bans the moment dry run came off. So the intended action goes to the audit log,
+where phase 5 can diff it, and the durable state stays empty.
+
+**The breaker counts before it acts.** The limit is how many bans a guild may take in one
+run, so the (limit + 1)-th trips it instead of landing. The bans already issued stay:
+halting is what the rail is for, undoing is what `revert` is for.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from contextlib import suppress
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+from timothy_api import audit
+from timothy_api.enforcement import outcomes, state
+from timothy_api.enforcement.retry import with_backoff
+from timothy_core.actors import Actor
+from timothy_core.db.models import Guild, NotificationChannel
+from timothy_core.enforcement.decisions import (
+    Ban,
+    Decision,
+    Skip,
+    SkipReason,
+    Warn,
+    decide,
+    subscribed_listings,
+)
+from timothy_core.enforcement.messages import ban_audit_reason, warn_message
+from timothy_core.enums import OutcomeStatus
+from timothy_core.ports.discord import DiscordError
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from timothy_api.enforcement.selfunbans import SelfUnbans
+    from timothy_api.settings import Settings
+    from timothy_core.enforcement.decisions import EnforcementRequest, PoolListing
+    from timothy_core.ports.discord import DiscordPort
+
+BREAKER_NOTICE = (
+    "**Enforcement paused here.**\n"
+    "Timothy was about to issue more than {limit} bans in this server in a single run, "
+    "which is the safety limit. Nothing further has been enforced. Review the recent "
+    "listings, then resume enforcement to continue."
+)
+"""What a guild is told when the breaker trips. It says what stopped and what to do,
+because the guild's moderators are the ones who have to decide whether the burst was
+legitimate."""
+
+
+@dataclass(slots=True)
+class Run:
+    """One job's worth of enforcement, and the breaker's memory of it.
+
+    The threshold is per guild per run rather than per guild per hour, because the case
+    it exists to catch — a bad migration, an accidental bulk listing — arrives as one
+    fan-out. A guild that legitimately takes twenty-five bans an hour for hours is not
+    what this is looking for.
+    """
+
+    bans_by_guild: dict[int, int] = field(default_factory=dict)
+    halted: set[int] = field(default_factory=set)
+
+    def is_halted(self, guild_id: int) -> bool:
+        """Whether the breaker has already stopped this run in this guild."""
+        return guild_id in self.halted
+
+
+class Enforcer:
+    """Carries out decisions against Discord, and records what happened."""
+
+    def __init__(
+        self,
+        *,
+        discord: DiscordPort,
+        settings: Settings,
+        self_unbans: SelfUnbans,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        """Enforce through `discord`, under `settings`' rails."""
+        self.discord = discord
+        self.settings = settings
+        self.self_unbans = self_unbans
+        self.sleep = sleep
+
+    async def enforce(
+        self, session: AsyncSession, run: Run, *, guild_id: int, user_id: int
+    ) -> Decision | None:
+        """Decide about one user in one guild, and carry the answer out.
+
+        `None` when there was nothing to decide: Timothy is not in the guild, or the
+        breaker has already halted this run there.
+        """
+        if run.is_halted(guild_id):
+            return None
+
+        request = await state.gather(session, self.discord, guild_id=guild_id, user_id=user_id)
+        if request is None:
+            return None
+
+        decision = decide(request)
+        match decision:
+            case Ban(justifications=justifications):
+                await self._ban(session, run, request, justifications)
+            case Warn(justifications=justifications):
+                await self._warn(session, request, justifications)
+            case Skip(reason=reason):
+                await self._skip(session, request, reason)
+        return decision
+
+    # -- the three answers ---------------------------------------------------
+
+    async def _ban(
+        self,
+        session: AsyncSession,
+        run: Run,
+        request: EnforcementRequest,
+        justifications: tuple[PoolListing, ...],
+    ) -> None:
+        guild_id = request.guild.guild_id
+        if run.bans_by_guild.get(guild_id, 0) >= self.settings.enforcement_burst_limit:
+            await self._trip_breaker(session, run, guild_id)
+            return
+
+        reason = ban_audit_reason(justifications)
+        run.bans_by_guild[guild_id] = run.bans_by_guild.get(guild_id, 0) + 1
+
+        if self.settings.dry_run:
+            self._audit_dry_run(session, request, action="ban", detail={"reason": reason})
+            return
+
+        try:
+            await with_backoff(
+                lambda: self.discord.ban(
+                    guild_id=guild_id, user_id=request.user_id, reason=reason
+                ),
+                sleep=self.sleep,
+            )
+        except DiscordError as error:
+            await self._record_failure(session, request, justifications, error)
+            return
+
+        for listing in justifications:
+            await outcomes.record(
+                session,
+                guild_id=guild_id,
+                user_id=request.user_id,
+                pool_id=listing.pool_id,
+                status=OutcomeStatus.BANNED,
+                reason=listing.reason,
+            )
+        audit.record(
+            session,
+            actor=Actor.system(),
+            action=audit.AuditAction.ENFORCEMENT_BAN,
+            target=audit.guild_user_target(guild_id=guild_id, user_id=request.user_id),
+            detail={
+                "pool_ids": [listing.pool_id for listing in justifications],
+                "reason": reason,
+            },
+        )
+
+    async def _warn(
+        self,
+        session: AsyncSession,
+        request: EnforcementRequest,
+        justifications: tuple[PoolListing, ...],
+    ) -> None:
+        guild_id = request.guild.guild_id
+        channel = await session.get(NotificationChannel, guild_id)
+
+        if channel is None:
+            await self._warn_without_a_channel(session, request, justifications)
+            return
+
+        for listing in justifications:
+            content = warn_message(user_id=request.user_id, listing=listing)
+            if self.settings.dry_run:
+                self._audit_dry_run(
+                    session,
+                    request,
+                    action="warn",
+                    detail={"pool_id": listing.pool_id, "channel_id": str(channel.channel_id)},
+                )
+                continue
+            try:
+                await with_backoff(
+                    lambda content=content: self.discord.post_message(
+                        channel_id=channel.channel_id, content=content
+                    ),
+                    sleep=self.sleep,
+                )
+            except DiscordError as error:
+                await self._record_failure(session, request, (listing,), error)
+                continue
+
+            await outcomes.record(
+                session,
+                guild_id=guild_id,
+                user_id=request.user_id,
+                pool_id=listing.pool_id,
+                status=OutcomeStatus.WARNED,
+                reason=listing.reason,
+            )
+            audit.record(
+                session,
+                actor=Actor.system(),
+                action=audit.AuditAction.ENFORCEMENT_WARN,
+                target=audit.guild_user_target(guild_id=guild_id, user_id=request.user_id),
+                detail={"pool_id": listing.pool_id, "channel_id": str(channel.channel_id)},
+            )
+
+    async def _warn_without_a_channel(
+        self,
+        session: AsyncSession,
+        request: EnforcementRequest,
+        justifications: tuple[PoolListing, ...],
+    ) -> None:
+        """A warn-level match with nowhere to report it.
+
+        Recorded as `failed` rather than `warned`, so that setting a channel later lets
+        the sweep deliver what was missed. A `warned` row here would silently consume the
+        one warning this user was ever going to get.
+        """
+        if self.settings.dry_run:
+            self._audit_dry_run(
+                session, request, action="warn", detail={"blocked": "no notification channel"}
+            )
+            return
+
+        for listing in justifications:
+            await outcomes.record(
+                session,
+                guild_id=request.guild.guild_id,
+                user_id=request.user_id,
+                pool_id=listing.pool_id,
+                status=OutcomeStatus.FAILED,
+                reason="no notification channel is set for this guild",
+            )
+        audit.record(
+            session,
+            actor=Actor.system(),
+            action=audit.AuditAction.ENFORCEMENT_FAILED,
+            target=audit.guild_user_target(
+                guild_id=request.guild.guild_id, user_id=request.user_id
+            ),
+            detail={"error": "no notification channel is set for this guild"},
+        )
+
+    async def _skip(
+        self, session: AsyncSession, request: EnforcementRequest, reason: SkipReason
+    ) -> None:
+        """Record the one skip a moderator will later ask about, and no others.
+
+        `skipped_exception` is durable state: it is what stops the sweep asking Discord
+        about this user every hour. The other skips deliberately record nothing —
+        recording `user_absent` would leave the door disarmed for a user who joins
+        tomorrow, and recording `enforcement_paused` would survive the resume.
+        """
+        if reason is not SkipReason.EXCEPTION:
+            return
+
+        for listing in subscribed_listings(request):
+            await outcomes.record(
+                session,
+                guild_id=request.guild.guild_id,
+                user_id=request.user_id,
+                pool_id=listing.pool_id,
+                status=OutcomeStatus.SKIPPED_EXCEPTION,
+                reason=listing.reason,
+            )
+
+    # -- the rails -----------------------------------------------------------
+
+    async def _trip_breaker(self, session: AsyncSession, run: Run, guild_id: int) -> None:
+        """Halt this run in this guild, and ask for a human.
+
+        In dry run the halt is simulated but the pause is not persisted: a rehearsal
+        against production data (PLAN.md, phase 5) must not leave real guilds paused when
+        dry run comes off. The audit row says which it was.
+        """
+        run.halted.add(guild_id)
+        limit = self.settings.enforcement_burst_limit
+
+        if not self.settings.dry_run:
+            guild = await session.get(Guild, guild_id)
+            if guild is not None:
+                guild.enforcement_paused = True
+
+        audit.record(
+            session,
+            actor=Actor.system(),
+            action=audit.AuditAction.ENFORCEMENT_BREAKER_TRIPPED,
+            target=audit.guild_target(guild_id),
+            detail={"burst_limit": limit, "dry_run": self.settings.dry_run},
+        )
+        if not self.settings.dry_run:
+            await self._notify(session, guild_id, BREAKER_NOTICE.format(limit=limit))
+
+    async def _notify(self, session: AsyncSession, guild_id: int, content: str) -> None:
+        """Tell a guild something, if it has said where. Never fails the caller."""
+        channel = await session.get(NotificationChannel, guild_id)
+        if channel is None:
+            return
+        # The notice is a courtesy; the pause is the point. A guild that has deleted its
+        # notification channel still gets paused.
+        with suppress(DiscordError):
+            await with_backoff(
+                lambda: self.discord.post_message(
+                    channel_id=channel.channel_id, content=content
+                ),
+                sleep=self.sleep,
+            )
+
+    # -- recording -----------------------------------------------------------
+
+    async def _record_failure(
+        self,
+        session: AsyncSession,
+        request: EnforcementRequest,
+        justifications: tuple[PoolListing, ...],
+        error: DiscordError,
+    ) -> None:
+        """A Discord call that retrying did not fix.
+
+        Not a job failure. The everyday cause is a guild that granted Timothy no ban
+        permission, or a listed user who outranks it, and neither is fixed by running the
+        same job again. The `failed` outcome is what the sweep looks for, so the retry
+        happens when the world might have changed.
+        """
+        for listing in justifications:
+            await outcomes.record(
+                session,
+                guild_id=request.guild.guild_id,
+                user_id=request.user_id,
+                pool_id=listing.pool_id,
+                status=OutcomeStatus.FAILED,
+                reason=str(error),
+            )
+        audit.record(
+            session,
+            actor=Actor.system(),
+            action=audit.AuditAction.ENFORCEMENT_FAILED,
+            target=audit.guild_user_target(
+                guild_id=request.guild.guild_id, user_id=request.user_id
+            ),
+            detail={
+                "pool_ids": [listing.pool_id for listing in justifications],
+                "error": str(error),
+            },
+        )
+
+    def _audit_dry_run(
+        self,
+        session: AsyncSession,
+        request: EnforcementRequest,
+        *,
+        action: str,
+        detail: dict[str, object],
+    ) -> None:
+        audit.record(
+            session,
+            actor=Actor.system(),
+            action=audit.AuditAction.ENFORCEMENT_DRY_RUN,
+            target=audit.guild_user_target(
+                guild_id=request.guild.guild_id, user_id=request.user_id
+            ),
+            detail={"would": action, **detail},
+        )
