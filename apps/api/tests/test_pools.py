@@ -2,7 +2,9 @@
 
 from fastapi.testclient import TestClient
 
-from .conftest import GUILD_ADMIN, MEMBER, OUTSIDER, POOL_ADMIN, headers
+from timothy_core.ports.fake import FakeDiscord
+
+from .conftest import GUILD, GUILD_ADMIN, MEMBER, OUTSIDER, POOL_ADMIN, headers
 
 
 def test_a_management_administrator_creates_a_pool(registered: TestClient) -> None:
@@ -43,6 +45,47 @@ def test_someone_in_none_of_timothys_guilds_may_not_read(pool: TestClient) -> No
     response = pool.get("/pools", headers=headers(OUTSIDER))
 
     assert response.status_code == 403
+
+
+def test_naming_the_calling_guild_answers_in_one_call(
+    pool: TestClient, discord: FakeDiscord
+) -> None:
+    """Reading pools needs membership of *any* guild Timothy is in, which is answered by
+    asking Discord once per guild until one says yes.
+
+    Discord paces that at about two calls a second. Across the migration's 123 guilds an
+    unlucky order took 52 seconds — measured — against a bot that gives up after 2.5 and a
+    Discord interaction that expires at 3. `/list_pools` is the only command a member with
+    no administrator anywhere can reach, so it was the users with the least power who got
+    the timeout.
+    """
+    response = pool.get(
+        "/pools", headers=headers(MEMBER) | {"X-Timothy-From-Guild": str(GUILD)}
+    )
+
+    assert response.status_code == 200
+    assert len(discord.calls_of("fetch_member")) == 1
+
+
+def test_the_calling_guild_is_a_hint_and_never_a_grant(
+    pool: TestClient, discord: FakeDiscord
+) -> None:
+    """It reorders the scan and nothing else. Someone in none of Timothy's guilds who
+    claims to be calling from one of them is still refused, because the answer still comes
+    from Discord (ADR 0001)."""
+    response = pool.get(
+        "/pools", headers=headers(OUTSIDER) | {"X-Timothy-From-Guild": str(GUILD)}
+    )
+
+    assert response.status_code == 403
+
+
+def test_an_unparseable_or_unknown_calling_guild_is_ignored(pool: TestClient) -> None:
+    """A header naming nonsense, or a guild Timothy is not in, falls back to the plain
+    scan rather than failing the request."""
+    for value in ("not-a-snowflake", "999999999999999999", ""):
+        response = pool.get("/pools", headers=headers(MEMBER) | {"X-Timothy-From-Guild": value})
+        assert response.status_code == 200, value
 
 
 def test_an_unknown_pool_is_a_404(pool: TestClient) -> None:

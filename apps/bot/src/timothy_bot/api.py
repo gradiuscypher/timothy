@@ -4,7 +4,8 @@ Every slash command and every relayed gateway event is a call through here. The 
 no domain logic and no database (ADR 0003): it asserts *who* is acting and lets the
 backend decide what that person may do.
 
-Two headers go on every call. The bearer token authenticates the container; the actor
+Two headers go on every call, and a third when there is a guild to name. The bearer
+token authenticates the container; the actor
 header names whom the call is for. They are separate questions — see
 `timothy_api.identity` — and the actor is always explicit, because a client that omitted
 it would be claiming to be Timothy itself.
@@ -23,6 +24,10 @@ import httpx
 log = logging.getLogger(__name__)
 
 SYSTEM: Final = "system"
+
+FROM_GUILD_HEADER: Final = "X-Timothy-From-Guild"
+"""Where the interaction came from. A hint for ordering, never a grant — see
+:meth:`Api._headers`."""
 """The actor for Timothy's own business: registering guilds, relaying events."""
 
 
@@ -60,18 +65,25 @@ class Api:
     reaches the API.
     """
 
-    def __init__(self, client: httpx.AsyncClient, *, actor: str) -> None:
+    def __init__(
+        self, client: httpx.AsyncClient, *, actor: str, from_guild: int | None = None
+    ) -> None:
         """Wrap an HTTP client that already carries the internal token."""
         self._client = client
         self._actor = actor
+        self._from_guild = from_guild
 
-    def as_user(self, user_id: int) -> "Api":
+    def as_user(self, user_id: int, *, from_guild: int | None = None) -> "Api":
         """The same backend, acting for the moderator who typed the command.
 
         Never `system`: `Requirement.SYSTEM` is refused everything a person owns, and the
         reverse, so a command sent as Timothy would be rejected rather than escalated.
+
+        `from_guild` is where the interaction came from. It is a *hint* and nothing more —
+        the backend still resolves every permission against Discord (ADR 0001), and this
+        only tells it which guild to look in first. See `X-Timothy-From-Guild` below.
         """
-        return Api(self._client, actor=f"user:{user_id}")
+        return Api(self._client, actor=f"user:{user_id}", from_guild=from_guild)
 
     async def _request(
         self,
@@ -87,7 +99,7 @@ class Api:
         )
         try:
             response = await self._client.request(
-                method, path, json=body, headers={"X-Timothy-Actor": self._actor}
+                method, path, json=body, headers=self._headers()
             )
         except httpx.HTTPError as error:
             message = f"could not reach Timothy's backend: {error}"
@@ -97,6 +109,25 @@ class Api:
             return None if response.status_code == httpx.codes.NO_CONTENT else response.json()
 
         raise ApiError(_detail(response), status_code=response.status_code)
+
+    def _headers(self) -> dict[str, str]:
+        """Who this is for, and where they are standing.
+
+        `X-Timothy-From-Guild` grants nothing. The one permission that has to scan every
+        guild Timothy is in — "is this person a member of *any* of them", which is what
+        reading pools requires — costs a Discord call per guild until it finds one, and
+        Discord paces those at about two a second. Across a hundred-odd guilds that is
+        most of a minute, and the bot gives up after 2.5 seconds because Discord closes
+        the interaction at three.
+
+        Saying which guild the command was typed in lets the backend look there first. It
+        still asks Discord, and it still falls back to the full scan; all this changes is
+        the order, which is the difference between one call and a hundred.
+        """
+        headers = {"X-Timothy-Actor": self._actor}
+        if self._from_guild is not None:
+            headers[FROM_GUILD_HEADER] = str(self._from_guild)
+        return headers
 
     # -- guilds ------------------------------------------------------------------------
 

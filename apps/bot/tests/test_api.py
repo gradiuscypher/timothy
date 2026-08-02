@@ -25,6 +25,25 @@ async def test_a_command_acts_for_the_moderator_who_typed_it(
 
 
 @pytest.mark.anyio
+async def test_a_command_names_the_guild_it_was_typed_in(api: Api, backend: Backend) -> None:
+    """Still identity, not authority. The backend resolves membership against Discord
+    either way; this only tells it which guild to look in first, which is the difference
+    between one call and a hundred for the one permission that has to scan them all."""
+    await api.as_user(MODERATOR, from_guild=GUILD).list_pools()
+
+    assert backend.request.headers["X-Timothy-From-Guild"] == str(GUILD)
+
+
+@pytest.mark.anyio
+async def test_a_call_from_nowhere_names_no_guild(api: Api, backend: Backend) -> None:
+    """The relay has no interaction behind it, so there is no guild to name and the
+    header is simply absent rather than empty."""
+    await api.as_user(MODERATOR).list_pools()
+
+    assert "X-Timothy-From-Guild" not in backend.request.headers
+
+
+@pytest.mark.anyio
 async def test_the_relay_acts_as_the_system(api: Api, backend: Backend) -> None:
     """`Requirement.SYSTEM` is refused everything a human owns, and the reverse — so
     relaying an event as a user, or a command as the system, would be rejected."""

@@ -11,7 +11,7 @@ exist at runtime.
 """
 
 from collections.abc import AsyncIterator
-from typing import Annotated
+from typing import Annotated, Final
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -63,9 +63,38 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 ResolverDep = Annotated[PermissionResolver, Depends(get_resolver)]
 
 
+FROM_GUILD_HEADER: Final = "X-Timothy-From-Guild"
+"""Where the caller's interaction came from. Ordering only — see :func:`_scan_order`."""
+
+
 async def _timothys_guild_ids(session: AsyncSession) -> list[int]:
     result = await session.scalars(select(Guild.guild_id))
     return list(result)
+
+
+def _scan_order(guild_ids: list[int], request: Request) -> list[int]:
+    """The guilds to check for membership, most likely first.
+
+    `ANY_GUILD_MEMBER` is answered by asking Discord "is this person here?" once per guild
+    until one says yes. Discord paces that at roughly two calls a second, so across a
+    hundred-odd guilds an unlucky order is most of a minute — well past the 2.5 seconds
+    the bot waits and the three Discord allows an interaction. `/list_pools` is the one
+    command that needs this permission and the one command a member with no administrator
+    anywhere can reach, so in practice it was the users with the least power who got the
+    timeout.
+
+    A caller that names the guild it is calling from gets that guild checked first. This
+    is a hint and grants nothing: the answer still comes from Discord, and every other
+    guild is still scanned behind it, so a header naming a guild the caller is not in
+    costs one wasted call and changes no decision (ADR 0001).
+    """
+    named = request.headers.get(FROM_GUILD_HEADER, "")
+    if not named.isdigit():
+        return guild_ids
+    first = int(named)
+    if first not in guild_ids:
+        return guild_ids
+    return [first, *(guild_id for guild_id in guild_ids if guild_id != first)]
 
 
 def _target_guild_id(request: Request) -> int:
@@ -142,7 +171,8 @@ class Requires:
             return PermissionContext(
                 actor=actor,
                 any_guild_member=await resolver.is_member_of_any(
-                    guild_ids=await _timothys_guild_ids(session), user_id=user_id
+                    guild_ids=_scan_order(await _timothys_guild_ids(session), request),
+                    user_id=user_id,
                 ),
             )
         return PermissionContext(actor=actor)

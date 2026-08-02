@@ -152,6 +152,24 @@ that guild was sitting behind an uncapped path to 2,935 notifications. Fixed: th
 counts enforcement actions, bans and notifications sharing one per-guild budget. ADR 0007's
 consequences record it.
 
+**`/list_pools` did not work at 123 guilds.** Reading pools requires membership of *any*
+guild Timothy is in, which `is_member_of_any` answers by asking Discord once per guild
+until one says yes. Measured across the real deployment: **51.9 seconds** for a full scan.
+The bot gives up after 2.5s and Discord closes the interaction at 3s, so any user whose
+guild was late in the scan order got a timeout — and `/list_pools` is the one command a
+member with no administrator anywhere can reach, so it was the users with the least power
+who hit it.
+
+Fixed by having the bot name the guild the interaction came from
+(`X-Timothy-From-Guild`) and the backend check that guild first. It is a hint and grants
+nothing: the answer still comes from Discord, the full scan still runs behind it, and a
+header naming a guild the caller is not in costs one wasted call and changes no decision
+(ADR 0001 intact). Measured after: **1.31 seconds**, one call. Two tests pin it — that it
+reorders, and that an outsider claiming a guild is still refused.
+
+This was phase 2 code that was correct and became wrong at scale. Nothing but the guild
+count made it visible.
+
 **The sweep's skip-guard only looked at pending jobs.** A guild whose sweep is still
 *running* — which, at half an hour per guild, is most of them — picked up a second job each
 round. Fixed to include `RUNNING`. Both fixes have tests that fail without them.
@@ -212,8 +230,12 @@ Worth doing before the deployment grows. Not worth doing between now and cutover
 - **The token is a single shared secret with no rotation story** (ADR 0008), and the
   production one was pasted into a session transcript during the rehearsal. **Rotate it.**
 - **Bulk member listing**, above — the standing answer to the 48-hour cold start.
-- **`is_member_of_any` still costs a scan** per non-member per TTL. Unchanged since
-  phase 2.
+- **`is_member_of_any` still costs a full scan for a genuine non-member** — the hint
+  above only helps someone who *is* in the guild they are calling from, which is everyone
+  arriving through the bot. A caller in none of Timothy's guilds still pays 123 calls
+  before being refused, which is 52 seconds of Discord's budget spent saying no. Phase 6's
+  OAuth `guilds` scope names the caller's guilds up front and closes this properly for
+  browser callers; the bot has no equivalent.
 - **`web/` is still a placeholder.** That is phase 6.
 
 ## Phase 6: web UI

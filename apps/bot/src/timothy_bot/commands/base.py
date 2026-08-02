@@ -44,8 +44,15 @@ def api_for(interaction: discord.Interaction) -> Api:
     Identity only. What that moderator may do is the backend's question, resolved against
     Discord itself — the `default_member_permissions` on the command is a second line of
     defence now, not the only one.
+
+    The guild travels too, and is still not authority: it tells the backend which guild to
+    check first when a permission needs a scan of all of them. `/list_pools` is the one
+    that does, and at a hundred-odd guilds an unordered scan does not finish inside
+    Discord's interaction deadline.
     """
-    return cast("HasApi", interaction.client).api.as_user(interaction.user.id)
+    return cast("HasApi", interaction.client).api.as_user(
+        interaction.user.id, from_guild=interaction.guild_id
+    )
 
 
 def guild_of(interaction: discord.Interaction) -> int:
