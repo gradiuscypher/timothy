@@ -29,6 +29,12 @@ FROM python:3.13-slim-bookworm AS runtime
 
 RUN groupadd --system timothy && useradd --system --gid timothy --create-home timothy
 
+# The SQLite file lives here. The directory has to exist in the image, owned by the
+# unprivileged user, because Docker seeds a fresh named volume from the image's mount
+# point — including its ownership. Created at first mount instead, it would be root's,
+# and the backend could not write the database it is the sole writer of.
+RUN install -d -o timothy -g timothy /data
+
 COPY --from=build --chown=timothy:timothy /app/.venv /app/.venv
 
 ENV PATH="/app/.venv/bin:$PATH" \

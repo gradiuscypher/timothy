@@ -9,6 +9,7 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     "pydantic-settings>=2.7",
     "httpx>=0.28",
+    "discord-py>=2.4",
 ]
 
 [project.scripts]

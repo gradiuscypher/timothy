@@ -1112,6 +1112,7 @@ name = "timothy-api"
 version = "0.1.0"
 source = { editable = "apps/api" }
 dependencies = [
+    { name = "discord-py" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "pydantic-settings" },
@@ -1121,6 +1122,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "discord-py", specifier = ">=2.4" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic-settings", specifier = ">=2.7" },

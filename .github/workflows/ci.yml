@@ -45,9 +45,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # compose interpolation requires these on every compose invocation, including
-      # `logs` and `exec`. cloudflared is never started, so the value is irrelevant.
+      # `logs` and `exec`. cloudflared is never started, so the value is irrelevant, and
+      # the Discord token is never used: the backend logs in lazily, on the first call
+      # that needs Discord, and nothing here makes one.
       TIMOTHY_DISCORD_TOKEN: ci-placeholder
       CLOUDFLARE_TUNNEL_TOKEN: ci-placeholder
+      TIMOTHY_INTERNAL_TOKEN: ci-placeholder
+      TIMOTHY_MANAGEMENT_GUILD_ID: "1"
     steps:
       - uses: actions/checkout@v7
 
@@ -70,6 +74,23 @@ jobs:
       - name: The SPA history fallback serves index.html
         run: |
           docker compose exec -T web wget -qO- http://127.0.0.1/pools/anything | grep -q '<title>Timothy</title>'
+
+      # nginx proxies /api from what will be a public tunnel, so this is the check that
+      # the internal token is really in front of the API and not merely configured.
+      - name: The API is closed to callers without the internal token
+        run: |
+          docker compose exec -T web sh -c '
+            wget -qS -O /dev/null http://127.0.0.1/api/pools 2>&1 | grep -q "401 Unauthorized"
+          '
+
+      - name: The backend migrated its own database on startup
+        run: |
+          docker compose exec -T backend python -c "
+          import sqlite3, sys
+          tables = {r[0] for r in sqlite3.connect('/data/timothy.db').execute(
+              \"SELECT name FROM sqlite_master WHERE type='table'\")}
+          sys.exit(0 if {'pools', 'listings', 'alembic_version'} <= tables else 1)
+          "
 
       - name: The bot reached the backend
         run: docker compose logs bot | grep -q 'backend reachable'

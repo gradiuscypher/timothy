@@ -59,6 +59,13 @@ ignore = [
 "**/migrations/versions/**" = [
     "INP001",  # alembic loads revisions by path, not as a package
 ]
+"apps/api/src/timothy_api/**" = [
+    # `HTTPException(detail=...)` is the message the API's caller reads — the API's
+    # contract, not an exception whose text belongs in its class.
+    "EM101",
+    "EM102",
+    "TRY003",
+]
 "**/tests/**" = [
     "S101",    # assert — that is what tests are made of
     "S105",    # hardcoded-password-string — fixtures, not secrets
@@ -89,7 +96,12 @@ docstring-code-format = true
 
 [tool.ty.environment]
 python-version = "3.13"
-root = ["packages/core/src", "apps/api/src", "apps/bot/src"]
+root = [
+    "packages/core/src",
+    "apps/api/src",
+    "apps/bot/src",
+    "apps/api",  # so `tests` is a package and its `from .conftest import ...` resolves
+]
 
 [tool.ty.src]
 include = ["packages", "apps"]
@@ -125,6 +137,10 @@ filterwarnings = ["error"]
 [tool.coverage.run]
 branch = true
 source = ["timothy_core", "timothy_api", "timothy_bot"]
+concurrency = ["thread", "greenlet"]
+# `TestClient` runs the app in its own thread, and SQLAlchemy's async layer switches
+# greenlets on every `await`. Without both, request handlers report as unexecuted lines
+# in code the tests demonstrably run.
 
 [tool.coverage.report]
 show_missing = true
