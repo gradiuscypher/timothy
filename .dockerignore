@@ -10,7 +10,10 @@
 .github
 .env
 docs
-migration
+# The migration is a one-shot tool; its code never ships in an image. Its manifest
+# does, because the uv workspace does not resolve without every member's.
+migration/*
+!migration/pyproject.toml
 web
 *.md
 !README.md

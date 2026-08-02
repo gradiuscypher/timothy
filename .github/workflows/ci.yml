@@ -197,6 +197,75 @@ jobs:
       - name: The backend runs unprivileged
         run: test "$(docker compose exec -T backend id -u | tr -d '\r')" != "0"
 
+      # The seam the migration's own tests cannot reach: a database written by
+      # `timothy-migrate` outside any container, served by the real backend image. If the
+      # importer ever writes a schema the backend would migrate again — or one it refuses
+      # — this is where that shows up, rather than on cutover morning.
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Build a dump and import it outside the containers
+        run: |
+          uv sync --locked
+          uv run python -c "
+          import sys; sys.path.insert(0, 'migration/tests')
+          import dumps
+          from pathlib import Path
+          dumps.build(
+              Path('cutover/dump'),
+              banpools=[dumps.pool('global', 'the shared banlist')],
+              bans=[dumps.ban(1001, 'global', reason='ban evasion')],
+          )
+          dumps.snapshot(Path('cutover/guilds.json'), [222222222222222222])
+          "
+          uv run timothy-migrate import \
+            --dump cutover/dump \
+            --guilds cutover/guilds.json \
+            --database cutover/timothy.db
+          uv run timothy-migrate verify --dump cutover/dump --database cutover/timothy.db
+          python -c "
+          import sqlite3
+          revision, = sqlite3.connect('cutover/timothy.db').execute(
+              'SELECT version_num FROM alembic_version').fetchone()
+          print(revision)
+          " > cutover/revision.txt
+
+      - name: The backend serves a database the migration wrote
+        run: |
+          docker compose cp cutover/timothy.db backend:/data/imported.db
+          docker compose exec -T -u root backend sh -c '
+            rm -f /data/timothy.db /data/timothy.db-wal /data/timothy.db-shm
+            mv /data/imported.db /data/timothy.db
+            chown timothy:timothy /data/timothy.db
+          '
+          docker compose restart backend
+          docker compose up --wait --wait-timeout 60 backend
+          docker compose exec -T backend python -c "
+          import sqlite3, sys
+          db = sqlite3.connect('/data/timothy.db')
+          pools = list(db.execute('SELECT id, name FROM pools'))
+          listings = list(db.execute('SELECT COUNT(*) FROM listings'))
+          # Empty on purpose: an outcome is Timothy's claim to have issued a ban itself
+          # (ADR 0005), and every ban the old bot placed is not Timothy's.
+          outcomes = list(db.execute('SELECT COUNT(*) FROM enforcement_outcomes'))
+          print(pools, listings, outcomes)
+          sys.exit(0 if pools == [(1, 'global')]
+                   and listings == [(1,)] and outcomes == [(0,)] else 1)
+          "
+
+      # The import brings the schema to head itself, so starting the backend on it must be
+      # a no-op. A revision that moved here means the two are building different schemas.
+      - name: The backend had no migrations left to run on it
+        run: |
+          after="$(docker compose exec -T backend python -c "
+          import sqlite3
+          print(sqlite3.connect('/data/timothy.db').execute(
+              'SELECT version_num FROM alembic_version').fetchone()[0])
+          " | tr -d '\r')"
+          test "$after" = "$(cat cutover/revision.txt)"
+
       - name: Dump logs
         if: failure()
         run: docker compose logs --no-color

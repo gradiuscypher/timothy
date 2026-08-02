@@ -26,6 +26,22 @@ docker compose up --build
 No service publishes a port. The Cloudflare Tunnel is the only ingress and its single
 origin is `http://web:80`, which serves the SPA and proxies `/api` to the backend.
 
+## Migrating from the old bot
+
+`migration/` holds the one-shot Mongo → SQLite import and the two checks that decide
+whether the cutover happens. [docs/cutover.md](./docs/cutover.md) is the runbook; run it
+top to bottom.
+
+```sh
+uv run timothy-migrate guilds --output guilds.json          # the one online step
+uv run timothy-migrate import --dump ./dump --guilds guilds.json --database timothy.db
+uv run timothy-migrate verify --dump ./dump --database timothy.db
+uv run timothy-migrate diff   --dump ./dump --database timothy.db   # after a dry run
+```
+
+The importer reads a `mongodump` directory rather than a live database, so the same inputs
+give the same output and a rehearsal is evidence about the real run.
+
 ## Slash commands
 
 The bot registers them itself, on startup, from `apps/bot/src/timothy_bot/commands/` —

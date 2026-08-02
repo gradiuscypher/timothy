@@ -8,17 +8,26 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app
 
 # Dependencies first, so a source change does not invalidate the resolved layer.
+#
+# `migration/pyproject.toml` is mounted for the same reason the other manifests are:
+# the workspace does not resolve without every member's. The migration is a one-shot
+# tool and has no business in a runtime image, and `--package` with
+# `--no-install-workspace` is what keeps its code out.
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     --mount=type=bind,source=packages/core/pyproject.toml,target=packages/core/pyproject.toml \
     --mount=type=bind,source=apps/api/pyproject.toml,target=apps/api/pyproject.toml \
     --mount=type=bind,source=apps/bot/pyproject.toml,target=apps/bot/pyproject.toml \
+    --mount=type=bind,source=migration/pyproject.toml,target=migration/pyproject.toml \
     uv sync --locked --no-dev --no-install-workspace --package timothy-api
 
 COPY pyproject.toml uv.lock ./
 COPY packages/core packages/core
 COPY apps/bot/pyproject.toml apps/bot/pyproject.toml
+# The migration's manifest, for the same reason as above: the workspace has to
+# resolve. Its source is deliberately absent.
+COPY migration/pyproject.toml migration/pyproject.toml
 COPY apps/api apps/api
 
 RUN --mount=type=cache,target=/root/.cache/uv \

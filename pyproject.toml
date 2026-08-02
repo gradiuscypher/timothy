@@ -9,15 +9,17 @@ dependencies = [
     "timothy-core",
     "timothy-api",
     "timothy-bot",
+    "timothy-migration",
 ]
 
 [tool.uv.workspace]
-members = ["packages/*", "apps/*"]
+members = ["packages/*", "apps/*", "migration"]
 
 [tool.uv.sources]
 timothy-core = { workspace = true }
 timothy-api = { workspace = true }
 timothy-bot = { workspace = true }
+timothy-migration = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -43,7 +45,7 @@ bypass-selection = true
 [tool.ruff]
 line-length = 96
 target-version = "py313"
-src = ["packages/core/src", "apps/api/src", "apps/bot/src"]
+src = ["packages/core/src", "apps/api/src", "apps/bot/src", "migration/src"]
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -65,6 +67,12 @@ ignore = [
     "EM101",
     "EM102",
     "TRY003",
+]
+"migration/src/timothy_migration/cli.py" = [
+    # The report *is* the output of this program. It is read once, by one person, on
+    # cutover morning, and routing it through a logger would put a timestamp and a level
+    # in front of every line of a document meant to be read as a document.
+    "T201",
 ]
 "apps/api/src/timothy_api/routers/**" = [
     # A FastAPI handler declares its dependencies as parameters, so the argument count
@@ -94,7 +102,7 @@ runtime-evaluated-base-classes = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["timothy_core", "timothy_api", "timothy_bot"]
+known-first-party = ["timothy_core", "timothy_api", "timothy_bot", "timothy_migration"]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -109,14 +117,19 @@ root = [
     "packages/core/src",
     "apps/api/src",
     "apps/bot/src",
+    "migration/src",
     "apps/api",  # so `tests` is a package and its `from .conftest import ...` resolves
-    # The bot's tests share `support.py` by plain import instead: two packages both named
-    # `tests` cannot both resolve, and only one of them can have the root.
+    # The bot's and the migration's tests share a plain module instead: two packages both
+    # named `tests` cannot both resolve, and only one of them can have the root. Being
+    # roots rather than packages also means their module names share one namespace, which
+    # is why the shared helpers are `support` and `dumps`, and why no test file is named
+    # the same in both.
     "apps/bot/tests",
+    "migration/tests",
 ]
 
 [tool.ty.src]
-include = ["packages", "apps"]
+include = ["packages", "apps", "migration"]
 
 [tool.ty.rules]
 possibly-unresolved-reference = "error"
@@ -136,20 +149,26 @@ error-on-warning = true
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-testpaths = ["packages/core/tests", "apps/api/tests", "apps/bot/tests"]
+testpaths = [
+    "packages/core/tests",
+    "apps/api/tests",
+    "apps/bot/tests",
+    "migration/tests",
+]
 addopts = [
     "--strict-markers",
     "--strict-config",
     "-ra",
     "--import-mode=importlib",
 ]
-pythonpath = ["apps/bot/tests"]  # so `support` imports the same way the type checker reads it
+# So the shared helpers import the same way the type checker reads them.
+pythonpath = ["apps/bot/tests", "migration/tests"]
 xfail_strict = true
 filterwarnings = ["error"]
 
 [tool.coverage.run]
 branch = true
-source = ["timothy_core", "timothy_api", "timothy_bot"]
+source = ["timothy_core", "timothy_api", "timothy_bot", "timothy_migration"]
 concurrency = ["thread", "greenlet"]
 # `TestClient` runs the app in its own thread, and SQLAlchemy's async layer switches
 # greenlets on every `await`. Without both, request handlers report as unexecuted lines
