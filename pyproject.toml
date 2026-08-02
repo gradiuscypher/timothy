@@ -1,0 +1,128 @@
+[project]
+name = "timothy"
+version = "0.1.0"
+description = "Shared moderation service for Discord — workspace root"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.13"
+dependencies = [
+    "timothy-core",
+    "timothy-api",
+    "timothy-bot",
+]
+
+[tool.uv.workspace]
+members = ["packages/*", "apps/*"]
+
+[tool.uv.sources]
+timothy-core = { workspace = true }
+timothy-api = { workspace = true }
+timothy-bot = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "anyio>=4.7",
+    "httpx2>=0.1",
+    "ruff>=0.9",
+    "ty>=0.0.1a10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+# ---------------------------------------------------------------------------
+# ruff — format + lint, strict. Configured once at the root for every member.
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 96
+target-version = "py313"
+src = ["packages/core/src", "apps/api/src", "apps/bot/src"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",  # trailing-comma-missing — conflicts with the formatter
+    "CPY001",  # copyright notices — the licence lives in LICENSE
+    "D203",    # one-blank-line-before-class — mutually exclusive with D211
+    "D213",    # multi-line-summary-second-line — mutually exclusive with D212
+    "ISC001",  # single-line-implicit-string-concat — conflicts with the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = [
+    "S101",    # assert — that is what tests are made of
+    "S105",    # hardcoded-password-string — fixtures, not secrets
+    "S106",    # hardcoded-password-func-arg
+    "PLR2004", # magic-value-comparison
+    "D",       # docstrings
+    "INP001",  # implicit-namespace-package — test dirs are not packages
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "sqlalchemy.orm.DeclarativeBase",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["timothy_core", "timothy_api", "timothy_bot"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# ty — type checking, strict. Every diagnostic that can be an error is one.
+# ---------------------------------------------------------------------------
+
+[tool.ty.environment]
+python-version = "3.13"
+root = ["packages/core/src", "apps/api/src", "apps/bot/src"]
+
+[tool.ty.src]
+include = ["packages", "apps"]
+
+[tool.ty.rules]
+possibly-unresolved-reference = "error"
+possibly-missing-attribute = "error"
+possibly-missing-import = "error"
+unresolved-import = "error"
+unused-ignore-comment = "error"
+redundant-cast = "error"
+division-by-zero = "error"
+
+[tool.ty.terminal]
+error-on-warning = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["packages/core/tests", "apps/api/tests", "apps/bot/tests"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+    "--import-mode=importlib",
+]
+xfail_strict = true
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+source = ["timothy_core", "timothy_api", "timothy_bot"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]

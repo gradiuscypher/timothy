@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: lint, type check, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install Python
+        run: uv python install
+
+      - name: Sync workspace
+        run: uv sync --locked
+
+      - name: Format
+        run: uv run ruff format --check --diff .
+
+      - name: Lint
+        run: uv run ruff check --output-format=github .
+
+      - name: Type check
+        run: uv run ty check
+
+      - name: Test
+        run: uv run pytest --cov --cov-report=term-missing
+
+  stack:
+    name: images build and the stack comes up
+    runs-on: ubuntu-latest
+    env:
+      # compose interpolation requires these on every compose invocation, including
+      # `logs` and `exec`. cloudflared is never started, so the value is irrelevant.
+      TIMOTHY_DISCORD_TOKEN: ci-placeholder
+      CLOUDFLARE_TUNNEL_TOKEN: ci-placeholder
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      # This rebuilds all three images from scratch every run — no layer cache is
+      # wired up yet. Deferred deliberately; revisit when the builds get slow.
+      #
+      # cloudflared is left out: it needs a real tunnel token and has nothing to
+      # front in CI. Everything behind it is exercised below.
+      - name: Start backend, bot and web
+        run: docker compose up --build --wait --wait-timeout 180 backend bot web
+
+      - name: The SPA origin proxies /api to the backend
+        run: |
+          docker compose exec -T web wget -qO- http://127.0.0.1/api/health | grep -q '"status":"ok"'
+          docker compose exec -T web wget -qO- http://127.0.0.1/api/openapi.json | grep -q '"title":"Timothy"'
+          docker compose exec -T web wget -qO- http://127.0.0.1/ | grep -q '<title>Timothy</title>'
+
+      - name: The SPA history fallback serves index.html
+        run: |
+          docker compose exec -T web wget -qO- http://127.0.0.1/pools/anything | grep -q '<title>Timothy</title>'
+
+      - name: The bot reached the backend
+        run: docker compose logs bot | grep -q 'backend reachable'
+
+      - name: The backend runs unprivileged
+        run: test "$(docker compose exec -T backend id -u | tr -d '\r')" != "0"
+
+      - name: Dump logs
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

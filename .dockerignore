@@ -1,0 +1,16 @@
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/node_modules
+**/dist
+.git
+.github
+.env
+docs
+migration
+web
+*.md
+!README.md

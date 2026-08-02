@@ -1,0 +1,65 @@
+name: timothy
+
+# Nothing publishes a port. Cloudflare Tunnel is the only ingress and it fronts nginx,
+# which serves the SPA and proxies /api to the backend. See PLAN.md, "Shape".
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      TIMOTHY_LOG_LEVEL: ${TIMOTHY_LOG_LEVEL:-info}
+    volumes:
+      - data:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks: [timothy]
+
+  bot:
+    build:
+      context: .
+      dockerfile: apps/bot/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      TIMOTHY_DISCORD_TOKEN: ${TIMOTHY_DISCORD_TOKEN:?set TIMOTHY_DISCORD_TOKEN in .env}
+      TIMOTHY_API_BASE_URL: http://backend:8000
+      TIMOTHY_LOG_LEVEL: ${TIMOTHY_LOG_LEVEL:-INFO}
+    networks: [timothy]
+
+  web:
+    build:
+      context: ./web
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [timothy]
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.7.3
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    depends_on: [web]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    networks: [timothy]
+
+volumes:
+  data:
+
+networks:
+  timothy:
+    driver: bridge

@@ -1,0 +1,18 @@
+[project]
+name = "timothy-core"
+version = "0.1.0"
+description = "Domain, schema, Discord port and enforcement engine"
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.10",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "aiosqlite>=0.20",
+    "alembic>=1.14",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/timothy_core"]
