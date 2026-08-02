@@ -79,7 +79,12 @@ function TopBar({ me }: { me: SignedIn }) {
     ...(me.manages_pools ? [{ to: "/pools", label: "Pools", exact: false }] : []),
     { to: "/guilds", label: "Servers", exact: false },
     { to: "/users", label: "Look up a user", exact: false },
-    ...(me.manages_pools ? [{ to: "/audit", label: "Audit log", exact: false }] : []),
+    ...(me.manages_pools
+      ? [
+          { to: "/audit", label: "Audit log", exact: false },
+          { to: "/ops", label: "Operations", exact: false },
+        ]
+      : []),
   ];
 
   return (

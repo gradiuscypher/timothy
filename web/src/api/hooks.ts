@@ -22,6 +22,11 @@ import {
   type Pool,
   type SignedIn,
   type Subscription,
+  type ActivityPoint,
+  type FailureGroup,
+  type Job,
+  type JobStatus,
+  type OpsOverview,
   type SubscriptionLevel,
 } from "./client";
 
@@ -48,6 +53,10 @@ export const keys = {
   channel: (id: string) => ["guilds", id, "notification-channel"] as const,
   enforcement: (id: string, status: string) => ["guilds", id, "enforcement", status] as const,
   auditLog: (action: string) => ["audit-log", action] as const,
+  opsOverview: (days: number) => ["ops", "overview", days] as const,
+  opsActivity: (days: number) => ["ops", "activity", days] as const,
+  opsFailures: ["ops", "failures"] as const,
+  opsJobs: (status: string, kind: string) => ["ops", "jobs", status, kind] as const,
 };
 
 // -- who is signed in ------------------------------------------------------------------
@@ -453,6 +462,62 @@ export function useAuditLog(
               limit: 50,
               ...(action ? { action } : {}),
               ...(beforeId === null ? {} : { before_id: beforeId }),
+            },
+          },
+        }),
+      ),
+  });
+}
+
+// -- is this thing working -------------------------------------------------------------
+
+/**
+ * The operator's view refetches on an interval rather than on demand, because the
+ * question it answers is "what is happening *now*" and a stale queue depth is worse than
+ * none. Thirty seconds is well under the interval the worker itself polls on, and each
+ * of these is a handful of counts against a local SQLite file.
+ */
+const OPS_REFRESH_MS = 30_000;
+
+export function useOpsOverview(days: number): UseQueryResult<OpsOverview> {
+  return useQuery({
+    queryKey: keys.opsOverview(days),
+    refetchInterval: OPS_REFRESH_MS,
+    queryFn: async () =>
+      unwrap(await api.GET("/ops/overview", { params: { query: { days } } })),
+  });
+}
+
+export function useOpsActivity(days: number): UseQueryResult<ActivityPoint[]> {
+  return useQuery({
+    queryKey: keys.opsActivity(days),
+    placeholderData: (previous) => previous,
+    queryFn: async () =>
+      unwrap(await api.GET("/ops/activity", { params: { query: { days } } })),
+  });
+}
+
+export function useOpsFailures(): UseQueryResult<FailureGroup[]> {
+  return useQuery({
+    queryKey: keys.opsFailures,
+    refetchInterval: OPS_REFRESH_MS,
+    queryFn: async () => unwrap(await api.GET("/ops/failures")),
+  });
+}
+
+export function useOpsJobs(status: JobStatus | "", kind: string): UseQueryResult<Job[]> {
+  return useQuery({
+    queryKey: keys.opsJobs(status, kind),
+    refetchInterval: OPS_REFRESH_MS,
+    placeholderData: (previous) => previous,
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/ops/jobs", {
+          params: {
+            query: {
+              limit: 50,
+              ...(status ? { status } : {}),
+              ...(kind ? { kind } : {}),
             },
           },
         }),

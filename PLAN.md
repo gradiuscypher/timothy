@@ -143,6 +143,12 @@ ADR 0010).
 | pools, listings | `ADMINISTRATOR` in the management guild |
 | subscriptions, exceptions, notification channel | `ADMINISTRATOR` in the target guild |
 | reading pools and listings | membership of any guild the bot is in |
+| the audit log, and the operations view | `ADMINISTRATOR` in the management guild |
+
+There is deliberately no "bot owner". The operations view — what Timothy holds, what its
+queue is doing, what is failing — is gated on the management guild's administrators, who
+are the people who own the pools. A configured list of owner IDs would be the first
+authority Timothy *stored* rather than derived, which is the thing ADR 0001 is about.
 
 ## Warn notifications
 
@@ -228,7 +234,8 @@ and spot-check; run the new stack in dry run against production data and diff it
 actions against the old bot's behaviour before switching dry run off.
 
 **6 — Web UI.** OAuth login and session, then parity screens, then the web-only work:
-paginated search over listings, bulk operations, per-guild enforcement history, audit log.
+paginated search over listings, bulk operations, per-guild enforcement history, audit log,
+and an operations view for whoever is running the thing.
 
 ## Carried-over backlog this resolves
 

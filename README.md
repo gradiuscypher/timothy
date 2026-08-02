@@ -116,3 +116,15 @@ Everything but `/health`, `/openapi.json` and `/auth/*` needs one of the two.
 
 Guild, user and channel IDs are **strings** in requests and responses. They are 64-bit,
 and JavaScript numbers are not.
+
+## Watching it run
+
+`/ops` in the web UI, for administrators of the management guild. It answers the
+questions that come up during a cutover and afterwards: is dry run still on, are the
+workers running, how far through the sweep is it, which server is producing all the
+failures, and what is stuck in the queue.
+
+Counts over time come from the append-only `audit_log`. They deliberately do **not** come
+from `enforcement_outcomes`, which holds one row per (guild, user, pool) updated in place
+— grouping its `attempted_at` by day would draw a confident chart of something that is
+not true.

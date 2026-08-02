@@ -10,6 +10,7 @@ import { AuditLog } from "@/routes/AuditLog";
 import { GuildDetail } from "@/routes/GuildDetail";
 import { Guilds } from "@/routes/Guilds";
 import { Home } from "@/routes/Home";
+import { Ops } from "@/routes/Ops";
 import { PoolDetail } from "@/routes/PoolDetail";
 import { Pools } from "@/routes/Pools";
 import { UserLookup } from "@/routes/UserLookup";
@@ -87,6 +88,12 @@ const userRoute = createRoute({
   },
 });
 
+const opsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/ops",
+  component: Ops,
+});
+
 const auditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/audit",
@@ -102,6 +109,7 @@ export const routeTree = rootRoute.addChildren([
   route(usersRoute),
   route(userRoute),
   route(auditRoute),
+  route(opsRoute),
 ]);
 
 export function makeRouter() {

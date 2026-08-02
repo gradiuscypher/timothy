@@ -40,6 +40,7 @@ class Operation(StrEnum):
     READ_GUILD = "read_guild"
     LIST_GUILDS = "list_guilds"
     READ_AUDIT_LOG = "read_audit_log"
+    READ_OPS = "read_ops"
     READ_ENFORCEMENT = "read_enforcement"
     REGISTER_GUILD = "register_guild"
     RELAY_EVENT = "relay_event"
@@ -67,6 +68,11 @@ REQUIREMENTS: Final[Mapping[Operation, Requirement]] = {
     Operation.MANAGE_POOLS: Requirement.MANAGEMENT_ADMIN,
     Operation.MANAGE_LISTINGS: Requirement.MANAGEMENT_ADMIN,
     Operation.READ_AUDIT_LOG: Requirement.MANAGEMENT_ADMIN,
+    # The operator's view of Timothy itself. The management guild's administrators are as
+    # close to "the operator" as a model that derives every permission from Discord gets;
+    # a configured list of owner IDs would be the first authority Timothy stored rather
+    # than derived, and ADR 0001 is about not doing that.
+    Operation.READ_OPS: Requirement.MANAGEMENT_ADMIN,
     # ADR 0001's known future relaxation: to a subscribing guild's own moderators.
     Operation.READ_POOLS: Requirement.ANY_GUILD_MEMBER,
     Operation.MANAGE_SUBSCRIPTIONS: Requirement.TARGET_GUILD_ADMIN,

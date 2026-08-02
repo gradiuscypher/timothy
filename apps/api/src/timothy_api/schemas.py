@@ -23,12 +23,13 @@ from timothy_core.db.models import (
     EnforcementOutcome,
     Guild,
     GuildException,
+    Job,
     Listing,
     NotificationChannel,
     Pool,
     Subscription,
 )
-from timothy_core.enums import OutcomeStatus, SubscriptionLevel
+from timothy_core.enums import JobStatus, OutcomeStatus, SubscriptionLevel
 
 SNOWFLAKE_PATTERN = r"^\d{1,20}$"
 
@@ -319,6 +320,136 @@ class EnforcementOutcomeRead(BaseModel):
                 "status": outcome.status,
                 "reason": outcome.reason,
                 "attempted_at": outcome.attempted_at,
+            }
+        )
+
+
+class InventoryCounts(BaseModel):
+    """How much of everything there is. One `COUNT(*)` each."""
+
+    guilds: int
+    guilds_paused: int
+    pools: int
+    listings: int
+    subscriptions: int
+    exceptions: int
+    notification_channels: int
+
+
+class QueueDepth(BaseModel):
+    """The state of the job table, which is the state of enforcement.
+
+    `sweep_outstanding` is the number of guilds with an `enforce_guild` job still to run.
+    A round takes about two days against the migrated data (PLAN.md, "What a sweep
+    costs"), so this counting down from the guild count is what "the sweep is working"
+    looks like — and it staying flat is what a wedged worker looks like.
+    """
+
+    pending: int
+    running: int
+    done: int
+    failed: int
+    sweep_outstanding: int
+    oldest_pending_at: datetime | None
+    """How far behind the queue is. `None` when nothing is waiting."""
+
+
+class OutcomeCounts(BaseModel):
+    """Everything Timothy has recorded doing, by status, across every guild."""
+
+    banned: int
+    warned: int
+    failed: int
+    skipped_exception: int
+
+
+class OpsOverview(BaseModel):
+    """One screen's worth of "is this thing working".
+
+    Deliberately includes the settings that decide what the numbers mean. `dry_run` in
+    particular: every other figure here reads completely differently depending on it, and
+    reading a zero as "nothing to do" when it is really "nothing was issued" is the
+    mistake this exists to prevent.
+    """
+
+    dry_run: bool
+    workers_enabled: bool
+    enforcement_burst_limit: int
+    sweep_interval_seconds: float
+    management_guild_id: Snowflake | None
+    login_configured: bool
+
+    counts: InventoryCounts
+    queue: QueueDepth
+    outcomes: OutcomeCounts
+    breaker_trips: int
+    """Breaker trips in the activity window. Each one paused a guild until a human
+    resumes it — unless it happened in dry run, which simulates the halt and skips the
+    pause (ADR 0007)."""
+
+    last_activity_at: datetime | None
+    """The newest audit row. The liveness check: if Timothy is doing anything at all,
+    this moves."""
+
+
+class ActivityPoint(BaseModel):
+    """How many of one kind of thing happened on one UTC day.
+
+    Read from `audit_log`, which is append-only, and *not* from `enforcement_outcomes`,
+    which is one row per (guild, user, pool) updated in place — grouping that by
+    `attempted_at` produces a plausible chart of the wrong thing.
+    """
+
+    day: str
+    """`YYYY-MM-DD`, UTC. Timothy stores UTC and does not know anybody's timezone."""
+
+    series: str
+    """The audit action, except dry-run rows, which split into
+    `enforcement.dry_run:ban` and `enforcement.dry_run:warn` — during a cutover the
+    difference between those two is the whole question."""
+
+    count: int
+
+
+class FailureGroup(BaseModel):
+    """Enforcement that failed, gathered by guild and by cause.
+
+    The shape the answer usually takes is "one guild, four hundred failures, all the same
+    sentence" — a server that granted Timothy no ban permission. Grouping makes that one
+    line instead of four hundred.
+    """
+
+    guild_id: Snowflake
+    reason: str | None
+    count: int
+    latest_at: datetime
+
+
+class JobRead(BaseModel):
+    """One row of the queue, as an operator needs to read it."""
+
+    id: int
+    kind: str
+    payload: dict[str, object]
+    run_after: datetime
+    attempts: int
+    status: JobStatus
+    last_error: str | None
+    created_at: datetime
+
+    @classmethod
+    def of(cls, job: Job) -> Self:
+        """Render a stored job."""
+        return cls.model_validate(
+            {
+                "id": job.id,
+                "kind": job.kind,
+                "payload": job.payload,
+                "run_after": job.run_after,
+                "attempts": job.attempts,
+                "status": job.status,
+                "last_error": job.last_error,
+                "created_at": job.created_at,
             }
         )
 

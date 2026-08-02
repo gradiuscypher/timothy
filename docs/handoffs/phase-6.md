@@ -17,16 +17,16 @@ cutover itself and the two deferred performance changes, both below.
 ## What phase 6 built
 
 **Backend.** OAuth login, browser sessions, and the three API additions the UI needed.
-728 Python tests (was 647), 100% line and branch coverage on every module phase 6 touched.
+751 Python tests (was 647), 100% line and branch coverage on every module phase 6 touched.
 
 **Frontend.** `web/` is now a real SPA: Vite, React 19, TypeScript, TanStack Router and
-Query, Tailwind v4, a client generated from the backend's own OpenAPI document. 38 Vitest
+Query, Tailwind v4, a client generated from the backend's own OpenAPI document. 56 Vitest
 tests against `msw`. Lint (`eslint`, type-aware, `strictTypeChecked`), type check, test
 and build all run in CI as a separate job.
 
-Eight screens: login, home, pools, one pool (listings, search, paging, bulk), user lookup,
+Nine screens: login, home, pools, one pool (listings, search, paging, bulk), user lookup,
 your servers, one server (subscriptions, exceptions, notification channel, pause,
-enforcement history), audit log.
+enforcement history), audit log, and operations.
 
 ## The decision the whole phase turned on
 
@@ -124,6 +124,38 @@ state cookie included), and the CI stack job asserts the built bundle is served,
 with no session gets a 401, and login fails closed when unconfigured. **This is the
 largest untested gap in phase 6** and it is named as such below.
 
+## The operations view
+
+`/ops` in the UI, `GET /ops/*` on the API, gated on the management guild's administrators
+— the same as the audit log. **There is deliberately no "bot owner".** A configured list
+of owner IDs would be the first authority Timothy stored rather than derived, which is the
+thing ADR 0001 exists to avoid; the people who own the pools are as close to "the
+operator" as a derived model gets.
+
+It was built for the cutover specifically. Every panel answers a question somebody asks at
+2am: is dry run still on, did the workers stop, how far through the sweep are we, which
+server is producing all the failures, what is stuck in the queue.
+
+Three things about it are load-bearing:
+
+- **Counts over time come from `audit_log` and nowhere else.** `enforcement_outcomes` is
+  one row per (guild, user, pool) *updated in place* — its `attempted_at` is the latest
+  attempt, not a history. Grouping it by day produces a plausible chart of something that
+  is not true. Outcomes appear only as totals, which is what that table can honestly
+  answer.
+- **Dry-run activity splits on what it *would* have done.** The engine writes
+  `detail.would` = `ban` or `warn`, and the activity series carries that through as
+  `enforcement.dry_run:ban` / `:warn`. A bare dry-run count cannot answer "how many bans
+  would that have been", which during a cutover is the only question.
+- **There is no retry button on the queue, on purpose.** A job reaches `failed` only after
+  exhausting its attempts on something running it again would not fix — an unknown kind, a
+  payload missing its key. The failures worth retrying are recorded as enforcement
+  outcomes and picked up by the sweep. A retry button would reliably do nothing.
+
+The overview also flags two things that are otherwise invisible: `workers_enabled` off
+(the API serves, every healthcheck passes, and nothing is being enforced) and
+`login_configured` false (the stack is up and nobody new can sign in).
+
 ## Routes added
 
 ```
@@ -136,6 +168,11 @@ GET    /guilds                            → the guilds you administer
 GET    /pools/{name}/listings             → now a page: limit, after_id, q
 POST   /pools/{name}/listings/bulk        → many at once
 POST   /pools/{name}/listings/bulk-delete → many at once, optional ?revert
+
+GET    /ops/overview                      → settings, counts, queue, outcomes
+GET    /ops/activity?days=                → per-UTC-day counts from the audit log
+GET    /ops/failures                      → enforcement failures grouped by guild + cause
+GET    /ops/jobs                          → the queue, filterable by status and kind
 ```
 
 `GET /pools/{name}/listings` **changed shape** from a list to
@@ -160,6 +197,14 @@ no such call — but it is the one breaking change in this phase.
   nothing else, and fetching a hundred names from Discord to decorate a list would spend
   the rate-limit budget enforcement runs on. Doing this properly means caching names, and
   that is a decision, not an afternoon.
+- **`enforcement_outcomes` has no index on `status`.** `/ops/overview` counts by status,
+  which is a full scan of that table. It is small today and a scan of tens of thousands of
+  rows on SQLite is a few milliseconds; add the index when the dashboard feels slow, not
+  before.
+- **`audit_log` grows forever and nothing prunes it.** `/ops/activity` is bounded by its
+  window and the table is indexed on `at`, so this is a disk question rather than a query
+  question — but it is the first thing that will want a retention policy, and that policy
+  is a decision about how far back "why is this user banned" has to reach.
 - **`GET /guilds` costs a resolved permission per candidate guild.** Cheap for a browser
   (its snapshot is a handful) and expensive for a service caller with no snapshot, which
   is why the bot has no command for it. Fine as it stands; worth remembering before

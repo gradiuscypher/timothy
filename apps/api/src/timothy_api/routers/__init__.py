@@ -10,6 +10,7 @@ from timothy_api.routers import (
     guilds,
     listings,
     notifications,
+    ops,
     pools,
     subscriptions,
 )
@@ -28,5 +29,6 @@ for router in (
     enforcement.router,
     events.router,
     audit_log.router,
+    ops.router,
 ):
     api.include_router(router)

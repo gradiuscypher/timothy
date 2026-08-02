@@ -565,10 +565,136 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Overview
+         * @description Everything a dashboard's top half needs, in one call.
+         *
+         *     One round trip rather than eight, because these are read together or not at all, and
+         *     a screen that renders half its tiles is worse than one that renders none.
+         *
+         *     The settings come back with the counts on purpose. `dry_run` in particular decides
+         *     what every other number on this page *means*: a zero in `outcomes.banned` reads as
+         *     "nothing needed doing" when dry run is off and "nothing was issued" when it is on,
+         *     and those are opposite situations.
+         */
+        get: operations["read_overview_ops_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Activity
+         * @description What happened, per UTC day, per kind of thing.
+         *
+         *     Grouped in SQL rather than pulled into Python: a busy day is thousands of audit rows,
+         *     and the window is up to ninety of them.
+         *
+         *     Days with nothing in them are absent rather than zero. A caller drawing a chart
+         *     should fill the gaps itself — the API reporting zeroes it never observed would be
+         *     inventing rows in an append-only record.
+         */
+        get: operations["read_activity_ops_activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/failures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Failures
+         * @description Enforcement that failed, by guild and by cause, worst first.
+         *
+         *     The everyday shape of this is one guild and one sentence repeated: a server that
+         *     granted Timothy no ban permission fails identically for every listed user it has.
+         *     Grouping turns four hundred rows into one line an operator can act on.
+         *
+         *     A `failed` outcome is not a failed job — it is a Discord call that retrying did not
+         *     fix, which the sweep will try again when the world might have changed. Jobs are
+         *     below, and are a different problem.
+         */
+        get: operations["read_failures_ops_failures_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Jobs
+         * @description The queue itself, newest first.
+         *
+         *     Read-only, and there is deliberately no way to retry from here. A job reaches `failed`
+         *     only after exhausting its attempts on something running it again would not fix — an
+         *     unknown kind, a payload missing the key its handler needs. The failures that *are*
+         *     worth retrying are recorded as enforcement outcomes instead, and the sweep picks
+         *     those up on its own (see :mod:`timothy_api.enforcement.engine`). A retry button here
+         *     would be a button that reliably does nothing.
+         */
+        get: operations["read_jobs_ops_jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ActivityPoint
+         * @description How many of one kind of thing happened on one UTC day.
+         *
+         *     Read from `audit_log`, which is append-only, and *not* from `enforcement_outcomes`,
+         *     which is one row per (guild, user, pool) updated in place — grouping that by
+         *     `attempted_at` produces a plausible chart of the wrong thing.
+         */
+        ActivityPoint: {
+            /** Day */
+            day: string;
+            /** Series */
+            series: string;
+            /** Count */
+            count: number;
+        };
         /**
          * AuditLogRead
          * @description One line of the append-only record.
@@ -699,6 +825,27 @@ export interface components {
             created_at: string;
         };
         /**
+         * FailureGroup
+         * @description Enforcement that failed, gathered by guild and by cause.
+         *
+         *     The shape the answer usually takes is "one guild, four hundred failures, all the same
+         *     sentence" — a server that granted Timothy no ban permission. Grouping makes that one
+         *     line instead of four hundred.
+         */
+        FailureGroup: {
+            /** Guild Id */
+            guild_id: string;
+            /** Reason */
+            reason: string | null;
+            /** Count */
+            count: number;
+            /**
+             * Latest At
+             * Format: date-time
+             */
+            latest_at: string;
+        };
+        /**
          * GatewayEvent
          * @description Something that happened on the gateway, relayed by the bot.
          *
@@ -752,6 +899,61 @@ export interface components {
             /** Version */
             version: string;
         };
+        /**
+         * InventoryCounts
+         * @description How much of everything there is. One `COUNT(*)` each.
+         */
+        InventoryCounts: {
+            /** Guilds */
+            guilds: number;
+            /** Guilds Paused */
+            guilds_paused: number;
+            /** Pools */
+            pools: number;
+            /** Listings */
+            listings: number;
+            /** Subscriptions */
+            subscriptions: number;
+            /** Exceptions */
+            exceptions: number;
+            /** Notification Channels */
+            notification_channels: number;
+        };
+        /**
+         * JobRead
+         * @description One row of the queue, as an operator needs to read it.
+         */
+        JobRead: {
+            /** Id */
+            id: number;
+            /** Kind */
+            kind: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /**
+             * Run After
+             * Format: date-time
+             */
+            run_after: string;
+            /** Attempts */
+            attempts: number;
+            status: components["schemas"]["JobStatus"];
+            /** Last Error */
+            last_error: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * JobStatus
+         * @description Where an enforcement job is in its life.
+         * @enum {string}
+         */
+        JobStatus: "pending" | "running" | "done" | "failed";
         /**
          * ListingCreate
          * @description Add a user to a pool. An assertion, not an action — see CONTEXT.md.
@@ -836,6 +1038,50 @@ export interface components {
             channel_id: string;
         };
         /**
+         * OpsOverview
+         * @description One screen's worth of "is this thing working".
+         *
+         *     Deliberately includes the settings that decide what the numbers mean. `dry_run` in
+         *     particular: every other figure here reads completely differently depending on it, and
+         *     reading a zero as "nothing to do" when it is really "nothing was issued" is the
+         *     mistake this exists to prevent.
+         */
+        OpsOverview: {
+            /** Dry Run */
+            dry_run: boolean;
+            /** Workers Enabled */
+            workers_enabled: boolean;
+            /** Enforcement Burst Limit */
+            enforcement_burst_limit: number;
+            /** Sweep Interval Seconds */
+            sweep_interval_seconds: number;
+            /** Management Guild Id */
+            management_guild_id: string | null;
+            /** Login Configured */
+            login_configured: boolean;
+            counts: components["schemas"]["InventoryCounts"];
+            queue: components["schemas"]["QueueDepth"];
+            outcomes: components["schemas"]["OutcomeCounts"];
+            /** Breaker Trips */
+            breaker_trips: number;
+            /** Last Activity At */
+            last_activity_at: string | null;
+        };
+        /**
+         * OutcomeCounts
+         * @description Everything Timothy has recorded doing, by status, across every guild.
+         */
+        OutcomeCounts: {
+            /** Banned */
+            banned: number;
+            /** Warned */
+            warned: number;
+            /** Failed */
+            failed: number;
+            /** Skipped Exception */
+            skipped_exception: number;
+        };
+        /**
          * OutcomeStatus
          * @description The result of enforcing one listing in one guild.
          *
@@ -890,6 +1136,29 @@ export interface components {
             name?: string | null;
             /** Description */
             description?: string | null;
+        };
+        /**
+         * QueueDepth
+         * @description The state of the job table, which is the state of enforcement.
+         *
+         *     `sweep_outstanding` is the number of guilds with an `enforce_guild` job still to run.
+         *     A round takes about two days against the migrated data (PLAN.md, "What a sweep
+         *     costs"), so this counting down from the guild count is what "the sweep is working"
+         *     looks like — and it staying flat is what a wedged worker looks like.
+         */
+        QueueDepth: {
+            /** Pending */
+            pending: number;
+            /** Running */
+            running: number;
+            /** Done */
+            done: number;
+            /** Failed */
+            failed: number;
+            /** Sweep Outstanding */
+            sweep_outstanding: number;
+            /** Oldest Pending At */
+            oldest_pending_at: string | null;
         };
         /**
          * SignedInRead
@@ -2105,6 +2374,152 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditLogRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_overview_ops_overview_get: {
+        parameters: {
+            query?: {
+                /** @description How many days back to count. UTC days. */
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsOverview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_activity_ops_activity_get: {
+        parameters: {
+            query?: {
+                /** @description How many days back to count. UTC days. */
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityPoint"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_failures_ops_failures_get: {
+        parameters: {
+            query?: {
+                /** @description How many rows to return. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureGroup"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_jobs_ops_jobs_get: {
+        parameters: {
+            query?: {
+                /** @description How many rows to return. */
+                limit?: number;
+                /** @description Return jobs older than this id. Omit for the newest page. */
+                before_id?: number | null;
+                /** @description Only jobs with this status. `failed` is the interesting one. */
+                status?: components["schemas"]["JobStatus"] | null;
+                /** @description Only jobs of this kind, e.g. `enforce_guild`. */
+                kind?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRead"][];
                 };
             };
             /** @description Validation Error */
