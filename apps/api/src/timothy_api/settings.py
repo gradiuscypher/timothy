@@ -43,7 +43,7 @@ def _seconds_or_iso(value: object) -> object:
     """Read a duration written as a plain number of seconds.
 
     `.env.example` and `compose.yaml` have always documented these as "seconds, or ISO
-    8601", and `TIMOTHY_SWEEP_INTERVAL=3600` is the value compose defaults to. Pydantic's
+    8601", and `TIMOTHY_SWEEP_INTERVAL=604800` is the value compose defaults to. Pydantic's
     own `timedelta` parsing rejects a bare number in a string, so without this the
     documented configuration stops the backend from starting at all — which is how it was
     found: by running the stack rather than by reading it.
@@ -121,7 +121,17 @@ class Settings(BaseSettings):
     """
 
     enforcement_burst_limit: int = Field(default=25, gt=0)
-    sweep_interval: Duration = timedelta(hours=1)
+    sweep_interval: Duration = timedelta(days=7)
+    """How often to start a round of sweeps.
+
+    Has to be longer than a round takes, or the round never ends and the interval means
+    nothing: a guild with a sweep still outstanding is skipped, so a short interval does
+    not sweep more often, it just leaves the worker permanently busy.
+
+    A round is one member lookup per listed user per subscribed guild, issued serially at
+    about two a second — for the migrated data, ~347,000 lookups and roughly 48 hours.
+    Weekly is that with room around it. Measure before lowering it.
+    """
 
     # -- the worker's own machinery ------------------------------------------
 

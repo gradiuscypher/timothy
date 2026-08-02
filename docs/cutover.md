@@ -260,34 +260,35 @@ In this order:
    drifted. A tripped breaker pauses that guild and asks for a human, which is what it is
    for: resume it deliberately, do not raise the limit to get past it.
 
-### Every round takes about two days, and the interval does not change that
+### Every round takes about two days, so the sweep runs weekly
 
-`fetch_member` runs at about two calls a second per guild. A full round of the production
-data is ~347,000 of them — roughly **48 hours**, sequential.
+A round asks Discord "is this user in this guild?" once per listed user per subscribed
+pool — ~347,000 lookups for this data. The worker holds one job at a time and awaits each
+call, so they go out serially at about two a second: roughly **48 hours**.
 
-That is not a cold start that pays off once. **It is every round.** A sweep candidate stops
-being one when its outcome settles, and the only settling statuses are `banned`, `warned`
-and `skipped_exception`. A listed user who is simply *not in the guild* records nothing, on
-purpose: recording `user_absent` would settle them, and if the gateway then missed their
-join, the sweep — the thing that exists to catch missed joins — would skip them forever.
+That is not a cold start that pays off once. **It is every round.** Only `banned`, `warned`
+and `skipped_exception` settle a candidate; a listed user who is merely *absent* records
+nothing, on purpose, because settling them would have the sweep skip them forever if the
+gateway later missed their join. Almost every candidate is absent — the rehearsal's guild
+went 2,995 → 2,992 after a completed round.
 
-Almost every candidate is absent. In the phase 5 rehearsal one guild went from 2,995
-candidates to 2,992 after a completed round. So the practical shape is:
+So `TIMOTHY_SWEEP_INTERVAL` is **604800 (weekly)**, not the hour it used to be. That is
+deliberate and it is not conservatism: an interval shorter than a round does not sweep more
+often, because a guild with one outstanding is skipped. It only leaves the backend calling
+Discord continuously and forever. Weekly is two days of work and five days quiet, on a
+period that is actually the period.
 
-- `TIMOTHY_SWEEP_INTERVAL` schedules rounds, but a guild with a sweep outstanding is
-  skipped, so the real period is however long a round takes — about two days here.
-- The backend makes Discord calls continuously, forever, and almost every one answers
-  "not here".
-- **The safety net has a two-day period, not an hourly one.** Set your expectations of it
-  accordingly.
+**The safety net is therefore a weekly net.** Set your expectations of it accordingly — and
+note that none of this touches the primary path: a listed user who joins is banned at the
+door by the gateway event, immediately, and that path never consults the candidate set
+(ADR 0004). The sweep is a backstop for gateway outages, not how bans normally happen.
 
-None of that touches the primary path: a listed user who joins is banned at the door by
-the gateway event, immediately, and that path never consults the candidate set.
-
-So it is survivable — the sweep is a backstop for gateway outages (ADR 0004), not how bans
-normally happen — but do not read `TIMOTHY_SWEEP_INTERVAL=3600` and believe it. The fix is
-bulk member listing, which turns a round from two days into minutes; the phase 5 handoff
-sizes it.
+The two-a-second is serial issuance, not Discord's pacing — separate guilds have separate
+rate-limit buckets, and 30 concurrent lookups across 30 guilds measured 43/s, which would
+put a round at a couple of hours. Sweeping guilds concurrently is the fix and is
+deliberately **not** being done before the cutover: it means concurrent writes to a
+single-writer SQLite database, which deserves its own pass rather than a rushed one. See
+PLAN.md, "What a sweep costs".
 
 ### If it goes wrong
 

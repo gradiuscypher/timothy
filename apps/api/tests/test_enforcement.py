@@ -7,7 +7,9 @@ point of ADR 0007, and the reason a test can assert both that a ban was issued a
 """
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from timothy_api.audit import AuditAction
@@ -30,6 +32,18 @@ from .conftest import (
 )
 
 OTHER_USER = 300_000_000_000_000_002
+
+
+@pytest.fixture
+def settings_overrides() -> dict[str, Any]:
+    """Pin the sweep interval rather than inheriting the production one.
+
+    These tests advance a clock past a staggered job's `run_after`, so they depend on the
+    stagger being small. The production default is a week (PLAN.md, "What a sweep costs"),
+    which is a fact about the migrated deployment's size and not something a unit test
+    should be reading.
+    """
+    return {"sweep_interval": timedelta(hours=1)}
 
 
 def later() -> datetime:

@@ -16,11 +16,16 @@ will pick up whatever arrived in the meantime — the candidates are computed wh
 runs, not when it was queued.
 
 Outstanding means pending *or running*, and the second half is not decoration. A guild
-sweep is a `fetch_member` per candidate, and Discord paces those at a couple a second per
-guild — so a guild with a few thousand listed users takes half an hour, comfortably longer
-than any sensible interval. Counting only pending jobs let every such guild pick up a
-second job while its first was still running, which is exactly the accumulation this is
-here to prevent. Found by running a real sweep against real data, not by reading it.
+sweep is a `fetch_member` per candidate, issued serially, so a guild with a few thousand
+listed users takes half an hour — comfortably longer than the interval anyone would think
+to configure. Counting only pending jobs let every such guild pick up a second job while
+its first was still running, which is exactly the accumulation this is here to prevent.
+Found by running a real sweep against real data, not by reading it.
+
+**The interval is therefore a floor, not a period.** A round takes as long as it takes —
+about two days for the migrated data — and this guard is what stops a shorter interval
+turning into a backlog rather than into more frequent sweeps. `SWEEP_INTERVAL` is set
+longer than a round on purpose; see PLAN.md, "What a sweep costs".
 """
 
 from __future__ import annotations

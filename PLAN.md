@@ -61,7 +61,7 @@ special cases.
 | `MANAGEMENT_GUILD_ID` | — | Exactly one. Administrators here own pools and listings. |
 | `DRY_RUN` | `true` | Fails safe — unparseable means on. |
 | `ENFORCEMENT_BURST_LIMIT` | `25` | Bans in one guild in one run before the breaker trips. Runtime-adjustable, not a redeploy. |
-| `SWEEP_INTERVAL` | `1h` | Staggered across guilds. Hourly over daily: if a sweep catches a miss, an hour of exposure is tolerable and a day is not. |
+| `SWEEP_INTERVAL` | `7d` | Must be longer than a round takes, and a round is one member lookup per listed user per subscribed guild, issued serially. This was `1h` on the reasoning that "an hour of exposure is tolerable and a day is not" — right about the tolerance, wrong about the arithmetic. See below. |
 | `PERMISSION_CACHE_TTL` | `60s` | |
 | `WORKERS_ENABLED` | `true` | The worker and sweep scheduler run inside the backend. Off leaves the API serving and the queue accumulating. |
 | `JOB_POLL_INTERVAL` | `1s` | How long the worker waits on an empty queue — the floor on how immediate "immediate" is. |
@@ -145,6 +145,39 @@ have.
 > **Listed for:** {reason}
 > Had **{pool}** been set to *ban*, they would have been removed. Switch with
 > `/add_subscription {pool} ban`. You won't be warned about this user again.
+
+## What a sweep costs
+
+Measured against the migrated data, because the original hourly default was chosen without
+this arithmetic and does not survive it.
+
+A round asks Discord "is this user in this guild?" once per listed user per pool their
+guild subscribes to, for every guild — **~347,000 lookups** for 123 guilds and 3,076
+listings. The worker holds one job at a time and awaits each call, so they go out
+serially at about **two a second**: roughly **48 hours** per round.
+
+That cost does not fall away after the first round. A candidate stops being one when its
+outcome settles, and only `banned`, `warned` and `skipped_exception` settle. A listed user
+who is merely *absent* records nothing, deliberately — settling them would have the sweep
+skip them forever if the gateway later missed their join, which is the exact gap the sweep
+exists to cover. Almost every candidate is absent, so the set barely shrinks: one guild
+went 2,995 → 2,992 after a completed round.
+
+So the sweep is a **weekly** net here, and `SWEEP_INTERVAL` is set to say so. An interval
+shorter than a round does not sweep more often — a guild with one outstanding is skipped —
+it only leaves the backend calling Discord continuously and forever.
+
+None of this touches the primary path. A listed user who joins is banned at the door by
+the gateway event, immediately, and that path never consults the candidate set (ADR 0004).
+
+**The two a second is serial issuance, not Discord's pacing.** Per-guild buckets cap around
+five calls a second, separate guilds have separate buckets, and 30 concurrent lookups
+across 30 guilds measured **43/s** — which would put a round at a couple of hours and make
+an hourly-ish net achievable again. Sweeping guilds concurrently is therefore the cheap
+fix, ahead of the bulk member listing that would make it cheaper still. Both are deferred
+until the system has run for a while: concurrency here means concurrent writes to a SQLite
+database with a single writer, and that deserves its own careful pass rather than a rushed
+one before a cutover.
 
 ## Phases
 

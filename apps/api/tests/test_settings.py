@@ -39,7 +39,7 @@ def test_the_defaults_match_plan_md() -> None:
     settings = Settings()
 
     assert settings.enforcement_burst_limit == DEFAULT_BURST
-    assert settings.sweep_interval == timedelta(hours=1)
+    assert settings.sweep_interval == timedelta(days=7)
     assert settings.permission_cache_ttl == timedelta(seconds=60)
     assert settings.auto_subscribe_pool == "global"
 
@@ -63,12 +63,12 @@ def test_a_duration_may_be_plain_seconds() -> None:
     the documented configuration stops the backend from starting."""
     settings = Settings(
         permission_cache_ttl="60",
-        sweep_interval="3600",
+        sweep_interval="604800",
         job_poll_interval="1",
     )
 
     assert settings.permission_cache_ttl == timedelta(seconds=60)
-    assert settings.sweep_interval == timedelta(hours=1)
+    assert settings.sweep_interval == timedelta(days=7)
     assert settings.job_poll_interval == timedelta(seconds=1)
 
 
@@ -89,12 +89,12 @@ def test_the_whole_compose_environment_starts_the_process() -> None:
         dry_run="true",
         auto_subscribe_pool="global",
         permission_cache_ttl="60",
-        sweep_interval="3600",
+        sweep_interval="604800",
         enforcement_burst_limit="25",
         workers_enabled="true",
         job_poll_interval="1",
         job_max_attempts="5",
     )
 
-    assert settings.sweep_interval == timedelta(hours=1)
+    assert settings.sweep_interval == timedelta(days=7)
     assert settings.workers_enabled is True

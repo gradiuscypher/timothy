@@ -144,14 +144,35 @@ join, which is the exact gap the sweep exists to cover. Almost every candidate i
 so the set barely shrinks: the rehearsal's guild went 2,995 → 2,992 after a completed
 round, verified by running `sweep_candidates` against the result.
 
-So `TIMOTHY_SWEEP_INTERVAL` schedules rounds but does not set the period — the outstanding-
-job guard means the real period is however long a round takes. **The safety net is a
-two-day net at this scale, not an hourly one**, and the backend makes Discord calls
-continuously and forever, almost all of them answering "not here".
+So the interval schedules rounds but does not set the period — the outstanding-job guard
+means the real period is however long a round takes. **`TIMOTHY_SWEEP_INTERVAL` is now
+weekly** (604800), in `.env.example`, `compose.yaml` and the settings default, with the
+arithmetic written down in PLAN.md under "What a sweep costs". Weekly is two days of work
+and five days quiet; anything shorter than a round does not sweep more often, it only
+leaves the backend calling Discord forever.
 
 The primary path is untouched: a join is enforced immediately by the gateway event, which
-never consults the candidate set. So this is a weakened backstop rather than an outage —
-but it makes the change below considerably more than an optimisation.
+never consults the candidate set. So this is a weekly backstop rather than an outage.
+
+**And the two-a-second is serial issuance, not Discord's pacing** — which I had wrong
+twice before measuring it properly. Per-guild buckets cap around five calls a second, and
+separate guilds have separate buckets:
+
+```
+serial, one guild        :  1.97 req/s
+10 concurrent, one guild :  5.42 req/s
+30 concurrent, one guild :  4.54 req/s   <- per-guild bucket ceiling
+30 concurrent, 30 guilds : 43.25 req/s   <- independent buckets
+```
+
+Sweeping guilds concurrently would put a round at ~2.2 hours instead of 48, with no new
+port operation and no privileged intent — a 20x win from the worker holding more than one
+job at a time. That makes it the *cheap* fix and bulk member listing the bigger one, which
+is the reverse of what this handoff said an hour earlier.
+
+Deliberately deferred until the system has run a while: concurrency here means concurrent
+writes to a SQLite database with a single writer, and that wants its own careful pass, not
+a rushed one before a cutover.
 
 **The warn burst is standing exposure, not a burst.** 2,935 users would be warned about in
 that guild *if present*; one actually was. The rest stay armed and trickle out as people
@@ -196,10 +217,16 @@ pins it, because it looks like a leak until you know why it is not.
 `docs/cutover.md`'s tripwire was corrected with it. A non-zero `enforcement_outcomes` in
 dry run is not on its own evidence that dry run is off; the *statuses* are what to check.
 
-## The one open decision: bulk member listing
+## Two deferred performance changes, in order
 
-Upgraded, on the evidence above, from an optimisation to the thing that makes
-`TIMOTHY_SWEEP_INTERVAL` mean what it says.
+**1. Sweep guilds concurrently.** 48 hours → ~2.2 hours, measured. No new `DiscordPort`
+operation, no privileged intent — the worker simply holds more than one job at a time. The
+care it needs is on the write side: concurrent jobs mean concurrent writes to SQLite as
+sole writer, the breaker's per-run accounting is per job, and shutdown has to stay clean
+(phase 3's handoff explains why the loops are asked to stop rather than cancelled). Do this
+one first, once the system has been running long enough to be boring.
+
+**2. Bulk member listing.**
 
 The sweep asks Discord "is this user in this guild?" once per candidate. Discord also
 offers `GET /guilds/{id}/members?limit=1000`, which pages the whole membership — one
@@ -212,7 +239,8 @@ request per thousand members, regardless of how many users are listed.
 | bulk, guilds of 200k members | 24,600 → ~3.5 hours |
 
 Bulk wins whenever a guild has fewer than 2.8 million members, which is every guild that
-exists. It was left undone deliberately, because it is not a cutover setting:
+exists, and it composes with the concurrency above. It was left undone deliberately,
+because it is not a cutover setting:
 
 - it needs a sixth `DiscordPort` operation, and ADR 0007 keeps that surface at five on
   purpose — "narrow enough to read in one sitting, and narrow enough for a fake to

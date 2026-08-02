@@ -8,6 +8,7 @@ cannot run says so in a row a human can read rather than only in a log line.
 import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,6 +32,18 @@ from .conftest import (
     jobs_of,
     wait_until,
 )
+
+
+@pytest.fixture
+def settings_overrides() -> dict[str, Any]:
+    """Pin the sweep interval rather than inheriting the production one.
+
+    These tests advance a clock past a staggered job's `run_after`, so they depend on the
+    stagger being small. The production default is a week (PLAN.md, "What a sweep costs"),
+    which is a fact about the migrated deployment's size and not something a unit test
+    should be reading.
+    """
+    return {"sweep_interval": timedelta(hours=1)}
 
 
 def at(when: datetime) -> Callable[[], datetime]:
