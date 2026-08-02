@@ -78,11 +78,48 @@ class TimothyBot(discord.Client):
             log.info("not syncing commands: TIMOTHY_SYNC_COMMANDS is off")
             return
 
-        uploaded = await self.tree.sync()
-        log.info("synced %d global commands", len(uploaded))
-        if self.settings.management_guild_id:
-            guild = discord.Object(id=self.settings.management_guild_id)
+        await self._upload_commands()
+
+    async def _upload_commands(self) -> None:
+        """Upload the command tree, and survive Discord refusing to take it.
+
+        A failed sync must not stop the bot starting. Commands are the *secondary*
+        surface; the primary one is the gateway relay that bans a listed user at the door
+        (ADR 0004). An exception raised here propagates out of `setup_hook`, kills the
+        process, and has the container restarted straight back into the same failure —
+        trading a missing slash command for no enforcement at all, and re-uploading the
+        global commands against Discord's rate limit on every loop.
+
+        The everyday cause is environmental and needs a person: a `MANAGEMENT_GUILD_ID`
+        that is wrong, or a guild Timothy was invited to without the
+        `applications.commands` scope. Both answer `50001 Missing Access`, and both are
+        far easier to diagnose from a bot that got as far as `on_ready` and said which
+        guilds it is actually in.
+
+        Only the upload is guarded. Building the tree above is not: a command that cannot
+        be constructed is a bug in this repository, and it should still be loud.
+        """
+        try:
+            uploaded = await self.tree.sync()
+        except discord.HTTPException:
+            log.exception("could not upload the global commands; starting without them")
+        else:
+            log.info("synced %d global commands", len(uploaded))
+
+        if not self.settings.management_guild_id:
+            return
+
+        guild = discord.Object(id=self.settings.management_guild_id)
+        try:
             in_management = await self.tree.sync(guild=guild)
+        except discord.HTTPException:
+            log.exception(
+                "could not upload the pool commands to the management guild %s. Check "
+                "that TIMOTHY_MANAGEMENT_GUILD_ID is that guild's ID, and that Timothy "
+                "was invited to it with the applications.commands scope as well as bot",
+                self.settings.management_guild_id,
+            )
+        else:
             log.info(
                 "synced %d commands in the management guild %s",
                 len(in_management),

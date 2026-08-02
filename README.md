@@ -97,10 +97,32 @@ to get past, so it is worth deciding deliberately rather than by accident.
 `TIMOTHY_PUBLIC_BASE_URL` turn on browser login. Leaving them unset closes it — the stack
 comes up and `/api/auth/login` answers 503 naming what is missing.
 
-On the Discord application, under OAuth2, register the redirect URI **exactly** as
-`<TIMOTHY_PUBLIC_BASE_URL>/api/auth/callback`. Discord compares the string, and a trailing
-slash is a failed login with no useful message. The backend requests `identify guilds`;
-nothing else.
+On the Discord application, under **OAuth2 → Redirects**, add the redirect URI **exactly**
+as `<TIMOTHY_PUBLIC_BASE_URL>/api/auth/callback`. Discord compares the string, and a
+trailing slash is a failed login with no useful message. The backend requests
+`identify guilds`; nothing else.
+
+> **Not the Interactions Endpoint URL.** The application's General Information page has a
+> field of that name, and it is a different thing entirely — it is where Discord would
+> POST slash-command interactions if you wanted to handle them over HTTP instead of the
+> gateway. Putting the callback there does two bad things: Discord validates the field by
+> POSTing a signed ping, gets a `405` from a GET-only OAuth route, and refuses to save it;
+> and if it ever *did* save, the bot would stop receiving commands over the gateway
+> altogether. `discord.client` warns about this on startup — "Application has an
+> interaction endpoint URL set, this means registered components and app commands will not
+> be received by the library". Leave that field empty; Timothy uses the gateway.
+
+Timothy must also be invited with the **`applications.commands`** scope, not just `bot`.
+Without it, uploading the pool commands to the management guild answers
+`403 Missing Access` — the bot logs which setting to check and carries on. An invite URL
+with everything Timothy needs:
+
+```
+https://discord.com/oauth2/authorize?client_id=<client id>&scope=bot+applications.commands&permissions=3076
+```
+
+`3076` is View Channel, Send Messages and Ban Members — the three the
+[Discord port](./packages/core/src/timothy_core/ports/discord.py) can actually use.
 
 Timothy stores no Discord user tokens. The access token is used once, at login, to ask who
 you are and which servers you are in, and then discarded — what you may *do* is resolved

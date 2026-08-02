@@ -1,6 +1,7 @@
 """The gateway client: what it asks Discord for, and what it does with what arrives."""
 
 import logging
+from types import SimpleNamespace
 from typing import Any, cast
 
 import discord
@@ -8,6 +9,7 @@ import pytest
 from discord import app_commands
 from support import GUILD, LISTED_USER, Backend, FakeInteraction, is_red
 
+from timothy_bot import commands
 from timothy_bot.api import Api
 from timothy_bot.client import TimothyBot, intents, on_command_error
 from timothy_bot.settings import Settings
@@ -90,6 +92,80 @@ async def test_setup_uploads_both_scopes_when_asked(
     await bot.setup_hook()
 
     assert synced == [None, MANAGEMENT_GUILD]
+
+
+def _refused(status: int, code: int, text: str) -> discord.HTTPException:
+    """What `tree.sync` raises when Discord will not take the commands."""
+    response = SimpleNamespace(status=status, reason=text)
+    return discord.HTTPException(response, {"code": code, "message": text})
+
+
+@pytest.mark.anyio
+async def test_a_refused_guild_sync_does_not_stop_the_bot(
+    api: Api, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A management guild Timothy was never invited to answers `50001 Missing Access`.
+    Dying here would trade a missing slash command for no enforcement at all — the
+    gateway relay is the primary path (ADR 0004) — and the container would restart
+    straight back into it, re-uploading the global commands every time."""
+
+    async def refuse_the_guild(
+        _self: object, *, guild: discord.abc.Snowflake | None = None
+    ) -> list[app_commands.AppCommand]:
+        if guild is not None:
+            raise _refused(403, 50001, "Missing Access")
+        return []
+
+    monkeypatch.setattr(app_commands.CommandTree, "sync", refuse_the_guild)
+    bot = TimothyBot(api, Settings(management_guild_id=MANAGEMENT_GUILD))
+
+    with caplog.at_level(logging.ERROR):
+        await bot.setup_hook()
+
+    assert "TIMOTHY_MANAGEMENT_GUILD_ID" in caplog.text
+    assert "applications.commands" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_a_refused_global_sync_does_not_stop_the_bot_either(
+    api: Api, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """And the guild sync is still attempted afterwards: the two are separate uploads and
+    one failing says nothing about the other."""
+    attempted: list[int | None] = []
+
+    async def refuse_everything(
+        _self: object, *, guild: discord.abc.Snowflake | None = None
+    ) -> list[app_commands.AppCommand]:
+        attempted.append(guild.id if guild is not None else None)
+        raise _refused(500, 0, "Internal Server Error")
+
+    monkeypatch.setattr(app_commands.CommandTree, "sync", refuse_everything)
+    bot = TimothyBot(api, Settings(management_guild_id=MANAGEMENT_GUILD))
+
+    with caplog.at_level(logging.ERROR):
+        await bot.setup_hook()
+
+    assert attempted == [None, MANAGEMENT_GUILD]
+    assert "starting without them" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_a_command_that_cannot_be_built_is_still_loud(
+    api: Api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the upload is guarded. A tree that cannot be constructed is a bug in this
+    repository, not somebody's Discord configuration."""
+
+    def broken(*_args: object, **_kwargs: object) -> None:
+        message = "two commands are named the same"
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(commands, "install", broken)
+    bot = TimothyBot(api, Settings(management_guild_id=MANAGEMENT_GUILD))
+
+    with pytest.raises(RuntimeError, match="named the same"):
+        await bot.setup_hook()
 
 
 @pytest.mark.anyio
