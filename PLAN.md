@@ -65,6 +65,7 @@ classes are compatible, so `shadcn add` later drops in over the top rather than 
 | Setting | Default | Notes |
 | --- | --- | --- |
 | `MANAGEMENT_GUILD_ID` | — | Exactly one. Administrators here own pools and listings. |
+| `OWNER_IDS` | — | Whoever runs the deployment. Gates `/ops` and nothing else. Unset closes it for everybody (ADR 0011). |
 | `DRY_RUN` | `true` | Fails safe — unparseable means on. |
 | `ENFORCEMENT_BURST_LIMIT` | `25` | Bans in one guild in one run before the breaker trips. Runtime-adjustable, not a redeploy. |
 | `SWEEP_INTERVAL` | `7d` | Must be longer than a round takes, and a round is one member lookup per listed user per subscribed guild, issued serially. This was `1h` on the reasoning that "an hour of exposure is tolerable and a day is not" — right about the tolerance, wrong about the arithmetic. See below. |
@@ -143,12 +144,14 @@ ADR 0010).
 | pools, listings | `ADMINISTRATOR` in the management guild |
 | subscriptions, exceptions, notification channel | `ADMINISTRATOR` in the target guild |
 | reading pools and listings | membership of any guild the bot is in |
-| the audit log, and the operations view | `ADMINISTRATOR` in the management guild |
+| the audit log | `ADMINISTRATOR` in the management guild |
+| the operations view | being named in `OWNER_IDS` |
 
-There is deliberately no "bot owner". The operations view — what Timothy holds, what its
-queue is doing, what is failing — is gated on the management guild's administrators, who
-are the people who own the pools. A configured list of owner IDs would be the first
-authority Timothy *stored* rather than derived, which is the thing ADR 0001 is about.
+Every rule but the last is derived from Discord. The last one cannot be: "who runs this
+deployment" is not a fact Discord has. It is configuration sitting beside
+`MANAGEMENT_GUILD_ID` — which already decides who owns pools — and it only ever narrows,
+gating one read-only view more tightly than a derived rule could. ADR 0011 draws the line
+between that and the in-app RBAC ADR 0001 rejected.
 
 ## Warn notifications
 

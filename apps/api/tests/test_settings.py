@@ -106,3 +106,21 @@ def test_a_duration_given_as_a_number_is_seconds() -> None:
     in the same shape as the one that stopped the container from starting."""
     assert Settings(sweep_interval=3600).sweep_interval == timedelta(hours=1)
     assert Settings(permission_cache_ttl=1.5).permission_cache_ttl == timedelta(seconds=1.5)
+
+
+def test_owner_ids_are_written_the_way_every_other_list_here_is() -> None:
+    """Comma-separated, not JSON. An environment variable holding `["1","2"]` is a
+    quoting problem waiting to happen, and nothing else in this project asks for one."""
+    assert Settings(owner_ids="242024455190577152").owner_ids == frozenset({242024455190577152})
+    assert Settings(owner_ids=" 1 , 2 ,3 ").owner_ids == frozenset({1, 2, 3})
+
+
+def test_no_owner_is_the_default() -> None:
+    """The operations view is closed until somebody is named. It never falls back."""
+    assert Settings().owner_ids == frozenset()
+
+
+def test_an_unreadable_owner_id_is_dropped_rather_than_fatal() -> None:
+    """This setting only ever narrows, so a typo produces a smaller set of owners and
+    never a larger one. Failing closed on the bad entry beats refusing to start."""
+    assert Settings(owner_ids="1,not-an-id,,2").owner_ids == frozenset({1, 2})

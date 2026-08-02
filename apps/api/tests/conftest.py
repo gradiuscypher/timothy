@@ -46,6 +46,12 @@ MEMBER = 200_000_000_000_000_003
 OUTSIDER = 200_000_000_000_000_004
 """In no guild Timothy is in."""
 
+OWNER = 200_000_000_000_000_005
+"""Named in `TIMOTHY_OWNER_IDS`, and deliberately nobody in Discord — not an
+administrator anywhere, not even a member. Whoever runs the deployment is configuration
+rather than a Discord permission (ADR 0011), and a fixture where the owner happened to
+be a management administrator could not tell the two apart."""
+
 LISTED_USER = 300_000_000_000_000_001
 CHANNEL = 400_000_000_000_000_001
 
@@ -122,6 +128,7 @@ def settings(tmp_path: Path, settings_overrides: dict[str, Any]) -> Settings:
         "database_url": f"sqlite+aiosqlite:///{tmp_path / 'timothy.db'}",
         "internal_token": TOKEN,
         "management_guild_id": MANAGEMENT_GUILD,
+        "owner_ids": frozenset({OWNER}),
         "auto_subscribe_pool": "global",
         "workers_enabled": False,
         "dry_run": False,

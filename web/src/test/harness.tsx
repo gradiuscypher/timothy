@@ -54,9 +54,23 @@ export const SIGNED_IN = {
   avatar: null,
   expires_at: "2026-08-09T00:00:00Z",
   manages_pools: true,
+  is_owner: false,
 };
 
-export const MEMBER = { ...SIGNED_IN, username: "member", manages_pools: false };
+export const MEMBER = {
+  ...SIGNED_IN,
+  username: "member",
+  manages_pools: false,
+  is_owner: false,
+};
+
+/** Whoever runs the deployment. Deliberately not a pool owner — they are separate jobs. */
+export const OWNER = {
+  ...SIGNED_IN,
+  username: "operator",
+  manages_pools: false,
+  is_owner: true,
+};
 
 /** Render a component with a query cache that neither retries nor caches across tests. */
 export function renderWithQuery(element: ReactElement): RenderResult & {

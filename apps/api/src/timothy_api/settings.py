@@ -14,7 +14,7 @@ from datetime import timedelta
 from typing import Annotated
 
 from pydantic import BeforeValidator, Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 FALSE_WORDS = frozenset({"0", "false", "f", "no", "n", "off"})
 """The only spellings that turn a fail-safe flag off. Deliberately not paired with a set
@@ -63,6 +63,32 @@ def _seconds_or_iso(value: object) -> object:
 
 Duration = Annotated[timedelta, BeforeValidator(_seconds_or_iso)]
 """A `timedelta` that also accepts a plain number of seconds, in either direction."""
+
+
+def _snowflake_set(value: object) -> object:
+    """Read a comma-separated list of Discord IDs.
+
+    `NoDecode` below turns off pydantic-settings' habit of JSON-parsing complex types
+    from the environment, which would make this setting `["1","2"]` in a `.env` file.
+    Every other list-shaped thing an operator writes in this project is comma-separated,
+    and a JSON array in an environment variable is a quoting problem waiting to happen.
+
+    Anything that is not a run of digits is dropped rather than raising. This is a
+    *narrowing* setting — a typo produces a smaller set of owners, never a larger one —
+    so failing closed on the bad entry is safer than refusing to start.
+    """
+    if isinstance(value, str):
+        return frozenset(
+            int(part)
+            for part in (piece.strip() for piece in value.split(","))
+            if part.isdigit()
+        )
+    return value
+
+
+OwnerIds = Annotated[frozenset[int], NoDecode, BeforeValidator(_snowflake_set)]
+"""Discord user IDs, written `123,456`. `frozenset` because `Settings` is frozen and a
+mutable field would make the model unhashable."""
 
 
 class Settings(BaseSettings):
@@ -128,6 +154,18 @@ class Settings(BaseSettings):
     """The one guild whose administrators own pools and listings (ADR 0001). Zero means
     unconfigured, and nobody holds `ADMINISTRATOR` in guild zero, so pool management is
     closed until it is set."""
+
+    owner_ids: OwnerIds = frozenset()
+    """Whoever runs this deployment. The operations view and nothing else (ADR 0011).
+
+    Written as `TIMOTHY_OWNER_IDS=242024455190577152`, or a comma-separated list if more
+    than one person needs it. Usually one.
+
+    Empty closes the operations view for everybody, including the management guild's
+    administrators. It never falls back to them: the whole point of this setting is that
+    "administers the pool server" and "runs Timothy" are different jobs, and a fallback
+    would silently make them the same one again.
+    """
 
     permission_cache_ttl: Duration = timedelta(seconds=60)
 

@@ -12,9 +12,10 @@ import { Button, ErrorNote, Loading } from "@/components/ui";
  * to redirect *to* until the session exists, and a browser that has never logged in
  * reaching a 401 is the ordinary first visit rather than an error.
  *
- * The navigation is drawn from `manages_pools`, which is a hint (`/auth/me` says so).
- * Hiding a link the caller cannot use is a courtesy; every route behind it resolves the
- * permission again for itself, so a stale hint costs a 403 and never an escalation.
+ * The navigation is drawn from `manages_pools` and `is_owner`, both of which are hints
+ * (`/auth/me` says so). Hiding a link the caller cannot use is a courtesy; every route
+ * behind it resolves the permission again for itself, so a stale hint costs a 403 and
+ * never an escalation.
  */
 export function Shell() {
   const session = useSignedIn();
@@ -79,12 +80,10 @@ function TopBar({ me }: { me: SignedIn }) {
     ...(me.manages_pools ? [{ to: "/pools", label: "Pools", exact: false }] : []),
     { to: "/guilds", label: "Servers", exact: false },
     { to: "/users", label: "Look up a user", exact: false },
-    ...(me.manages_pools
-      ? [
-          { to: "/audit", label: "Audit log", exact: false },
-          { to: "/ops", label: "Operations", exact: false },
-        ]
-      : []),
+    ...(me.manages_pools ? [{ to: "/audit", label: "Audit log", exact: false }] : []),
+    // Drawn from `is_owner`, not `manages_pools`: running the deployment and owning the
+    // pools are different jobs, and the operations view belongs to the first (ADR 0011).
+    ...(me.is_owner ? [{ to: "/ops", label: "Operations", exact: false }] : []),
   ];
 
   return (

@@ -25,6 +25,7 @@ from .conftest import (
     MANAGEMENT_GUILD,
     MEMBER,
     OUTSIDER,
+    OWNER,
     POOL_ADMIN,
     FakeOAuth,
     headers,
@@ -393,3 +394,38 @@ def test_the_redirect_uri_is_built_from_configuration(
     """Discord matches this string exactly against what is registered, so it cannot be
     reconstructed from the request: behind the tunnel the backend sees an internal host."""
     assert redirect_uri(settings.model_copy(update={"public_base_url": base_url})) == expected
+
+
+# -- who runs this deployment (ADR 0011) -----------------------------------------------
+
+
+def test_a_signed_in_owner_is_told_so(registered: TestClient, oauth: FakeOAuth) -> None:
+    """The SPA draws the Operations link from this. A hint, like `manages_pools` — the
+    `/ops` routes check it again for themselves."""
+    sign_in(registered, oauth, user_id=OWNER, guild_ids=(GUILD,))
+
+    me = registered.get("/auth/me").json()
+
+    assert me["is_owner"] is True
+    assert me["manages_pools"] is False
+
+
+def test_the_management_guilds_administrator_is_not_the_owner(
+    registered: TestClient, oauth: FakeOAuth
+) -> None:
+    """Two different jobs, and this is where the UI learns they are different."""
+    sign_in(registered, oauth, user_id=POOL_ADMIN, guild_ids=(MANAGEMENT_GUILD,))
+
+    me = registered.get("/auth/me").json()
+
+    assert me["manages_pools"] is True
+    assert me["is_owner"] is False
+
+
+def test_a_service_caller_can_be_the_owner_too(registered: TestClient) -> None:
+    """The actor is the actor, whichever credential carried it."""
+    assert registered.get("/auth/me", headers=headers(OWNER)).json()["is_owner"] is True
+
+
+def test_timothy_itself_is_never_the_owner(registered: TestClient) -> None:
+    assert registered.get("/auth/me", headers=headers("system")).json()["is_owner"] is False

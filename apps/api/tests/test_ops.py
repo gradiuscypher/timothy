@@ -13,6 +13,7 @@ from typing import Any
 import httpx2
 from fastapi.testclient import TestClient
 
+from timothy_api.app import create_app
 from timothy_api.jobs import JobKind
 from timothy_api.settings import Settings
 from timothy_core.ports.discord import ForbiddenError
@@ -24,8 +25,10 @@ from .conftest import (
     GUILD_ADMIN,
     LISTED_USER,
     MEMBER,
+    OWNER,
     POOL_ADMIN,
     Enforcement,
+    FakeOAuth,
     headers,
     insert_job,
 )
@@ -52,13 +55,13 @@ def worker(
 
 
 def _overview(client: TestClient, query: str = "") -> Any:  # noqa: ANN401 — the JSON
-    response = client.get(f"/ops/overview{query}", headers=headers(POOL_ADMIN))
+    response = client.get(f"/ops/overview{query}", headers=headers(OWNER))
     assert response.status_code == 200, response.text
     return response.json()
 
 
 def _activity(client: TestClient, query: str = "") -> dict[str, int]:
-    response = client.get(f"/ops/activity{query}", headers=headers(POOL_ADMIN))
+    response = client.get(f"/ops/activity{query}", headers=headers(OWNER))
     assert response.status_code == 200, response.text
     return {point["series"]: point["count"] for point in response.json()}
 
@@ -82,20 +85,70 @@ def _list(client: TestClient, user_id: int = LISTED_USER) -> httpx2.Response:
 # -- who may look ----------------------------------------------------------------------
 
 
-def test_the_ops_view_is_for_the_management_guilds_administrators(pool: TestClient) -> None:
-    """The same gate as the audit log. A configured list of owner IDs would be the first
-    authority Timothy stored rather than derived (ADR 0001)."""
-    assert pool.get("/ops/overview", headers=headers(POOL_ADMIN)).status_code == 200
+def test_the_ops_view_is_for_whoever_runs_the_deployment(pool: TestClient) -> None:
+    """Named in `TIMOTHY_OWNER_IDS`, and nothing else (ADR 0011)."""
+    for path in ("/ops/overview", "/ops/activity", "/ops/failures", "/ops/jobs"):
+        assert pool.get(path, headers=headers(OWNER)).status_code == 200, path
+
+
+def test_the_owner_needs_no_discord_standing_at_all(
+    pool: TestClient, discord: FakeDiscord
+) -> None:
+    """`OWNER` is in no guild Timothy is in and holds no permission anywhere, and still
+    gets in — because who runs this deployment is not a fact Discord has. It is also the
+    only requirement that costs no Discord call."""
+    discord.calls.clear()
+
+    assert pool.get("/ops/overview", headers=headers(OWNER)).status_code == 200
+    assert discord.calls == []
+
+
+def test_owning_the_pools_does_not_mean_running_timothy(pool: TestClient) -> None:
+    """The whole point of the change. Administering the management server makes somebody
+    responsible for the pools, not for the deployment — and this view exposes the queue,
+    every server's failures, and what the settings actually are."""
+    for path in ("/ops/overview", "/ops/activity", "/ops/failures", "/ops/jobs"):
+        assert pool.get(path, headers=headers(POOL_ADMIN)).status_code == 403, path
 
 
 def test_a_guild_administrator_may_not_look(pool: TestClient) -> None:
-    """Running their own server is not running Timothy."""
+    """Running their own server is not running Timothy either."""
     for path in ("/ops/overview", "/ops/activity", "/ops/failures", "/ops/jobs"):
         assert pool.get(path, headers=headers(GUILD_ADMIN)).status_code == 403, path
 
 
 def test_an_ordinary_member_may_not_look(pool: TestClient) -> None:
     assert pool.get("/ops/overview", headers=headers(MEMBER)).status_code == 403
+
+
+def test_timothy_may_not_read_its_own_operations_view(pool: TestClient) -> None:
+    """`system` is refused everything that is not its own business, and this is a screen
+    for a person."""
+    assert pool.get("/ops/overview", headers=headers("system")).status_code == 403
+
+
+def test_no_owner_configured_closes_the_view_for_everybody(
+    settings: Settings, discord: FakeDiscord, oauth: FakeOAuth
+) -> None:
+    """It never falls back to the management guild's administrators. A fallback would
+    silently re-merge the two jobs this setting exists to keep apart, and the failure
+    would be invisible — the page would simply work for the wrong people."""
+    unowned = settings.model_copy(update={"owner_ids": frozenset()})
+
+    with TestClient(create_app(unowned, discord_port=discord, oauth_port=oauth)) as client:
+        for actor in (OWNER, POOL_ADMIN, GUILD_ADMIN, MEMBER):
+            assert client.get("/ops/overview", headers=headers(actor)).status_code == 403
+
+
+def test_more_than_one_owner_is_allowed_but_one_is_the_usual_case(
+    settings: Settings, discord: FakeDiscord, oauth: FakeOAuth
+) -> None:
+    shared = settings.model_copy(update={"owner_ids": frozenset({OWNER, MEMBER})})
+
+    with TestClient(create_app(shared, discord_port=discord, oauth_port=oauth)) as client:
+        assert client.get("/ops/overview", headers=headers(OWNER)).status_code == 200
+        assert client.get("/ops/overview", headers=headers(MEMBER)).status_code == 200
+        assert client.get("/ops/overview", headers=headers(POOL_ADMIN)).status_code == 403
 
 
 # -- the overview ----------------------------------------------------------------------
@@ -200,7 +253,7 @@ def test_the_jobs_view_shows_the_queue_newest_first(pool: TestClient) -> None:
     _subscribe(pool)
     _list(pool)
 
-    jobs = pool.get("/ops/jobs", headers=headers(POOL_ADMIN)).json()
+    jobs = pool.get("/ops/jobs", headers=headers(OWNER)).json()
 
     assert [job["kind"] for job in jobs] == ["enforce_listing", "enforce_subscription"]
     assert jobs[0]["payload"]
@@ -217,7 +270,7 @@ def test_the_jobs_view_can_be_narrowed_to_the_failures(
     for attempt in range(1, settings.job_max_attempts + 2):
         enforcement.run_once(now=at(base + timedelta(hours=attempt)))
 
-    failed = pool.get("/ops/jobs?status=failed", headers=headers(POOL_ADMIN)).json()
+    failed = pool.get("/ops/jobs?status=failed", headers=headers(OWNER)).json()
 
     assert [job["kind"] for job in failed] == ["nonsense"]
     assert failed[0]["last_error"]
@@ -228,7 +281,7 @@ def test_the_jobs_view_can_be_narrowed_to_one_kind(pool: TestClient) -> None:
     _list(pool)
 
     jobs = pool.get(
-        f"/ops/jobs?kind={JobKind.ENFORCE_LISTING.value}", headers=headers(POOL_ADMIN)
+        f"/ops/jobs?kind={JobKind.ENFORCE_LISTING.value}", headers=headers(OWNER)
     ).json()
 
     assert [job["kind"] for job in jobs] == ["enforce_listing"]
@@ -238,9 +291,9 @@ def test_the_jobs_view_pages_by_id(pool: TestClient) -> None:
     _subscribe(pool)
     _list(pool)
 
-    first = pool.get("/ops/jobs?limit=1", headers=headers(POOL_ADMIN)).json()
+    first = pool.get("/ops/jobs?limit=1", headers=headers(OWNER)).json()
     second = pool.get(
-        f"/ops/jobs?limit=1&before_id={first[0]['id']}", headers=headers(POOL_ADMIN)
+        f"/ops/jobs?limit=1&before_id={first[0]['id']}", headers=headers(OWNER)
     ).json()
 
     assert second[0]["id"] < first[0]["id"]
@@ -311,8 +364,8 @@ def test_activity_is_bounded_by_the_window_it_was_asked_for(pool: TestClient) ->
     _list(pool)
 
     assert _activity(pool, "?days=1")["listing.create"] == 1
-    assert pool.get("/ops/activity?days=0", headers=headers(POOL_ADMIN)).status_code == 422
-    assert pool.get("/ops/activity?days=91", headers=headers(POOL_ADMIN)).status_code == 422
+    assert pool.get("/ops/activity?days=0", headers=headers(OWNER)).status_code == 422
+    assert pool.get("/ops/activity?days=91", headers=headers(OWNER)).status_code == 422
 
 
 def test_a_day_with_nothing_in_it_is_absent_rather_than_zero(pool: TestClient) -> None:
@@ -321,7 +374,8 @@ def test_a_day_with_nothing_in_it_is_absent_rather_than_zero(pool: TestClient) -
     _list(pool)
 
     days = {
-        point["day"] for point in pool.get("/ops/activity?days=90", headers=headers()).json()
+        point["day"]
+        for point in pool.get("/ops/activity?days=90", headers=headers(OWNER)).json()
     }
 
     assert len(days) == 1
@@ -347,7 +401,7 @@ def test_failures_are_grouped_by_guild_and_cause(
         _list(pool, user_id)
     enforcement.drain()
 
-    failures = pool.get("/ops/failures", headers=headers(POOL_ADMIN)).json()
+    failures = pool.get("/ops/failures", headers=headers(OWNER)).json()
 
     assert len(failures) == 1
     assert failures[0]["guild_id"] == str(GUILD)
@@ -356,4 +410,4 @@ def test_failures_are_grouped_by_guild_and_cause(
 
 
 def test_nothing_failing_is_an_empty_list(pool: TestClient) -> None:
-    assert pool.get("/ops/failures", headers=headers(POOL_ADMIN)).json() == []
+    assert pool.get("/ops/failures", headers=headers(OWNER)).json() == []

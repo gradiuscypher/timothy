@@ -171,6 +171,13 @@ class Requires:
         if user_id is None:
             return PermissionContext(actor=actor)
 
+        # The one requirement with nothing to ask Discord: who runs this deployment is
+        # configuration, not a Discord permission (ADR 0011). An empty set refuses
+        # everybody rather than falling back to the management guild's administrators —
+        # a fallback would quietly re-merge two jobs this exists to keep apart.
+        if needed is Requirement.OWNER:
+            return PermissionContext(actor=actor, owner=user_id in settings.owner_ids)
+
         if needed is Requirement.MANAGEMENT_ADMIN:
             return PermissionContext(
                 actor=actor,

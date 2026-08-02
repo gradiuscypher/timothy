@@ -170,10 +170,10 @@ async def me(
 ) -> SignedInRead:
     """Who the caller is, and the one thing the UI needs to know they can do.
 
-    `manages_pools` is a cached Discord lookup, and it decides which navigation the SPA
-    draws. It is a convenience, not a gate: every route the pool screens call resolves
-    the same permission again for itself, so a stale `false` hides a link and a stale
-    `true` produces a 403 rather than an escalation.
+    `manages_pools` is a cached Discord lookup and `is_owner` is a set membership; both
+    decide which navigation the SPA draws. They are conveniences, not gates: every route
+    behind them resolves the same thing again for itself, so a stale `false` hides a link
+    and a stale `true` produces a 403 rather than an escalation.
 
     Service callers get an answer too, with no session attached. That is what the bot's
     contract test reads, and what makes "am I talking to a backend that knows me" one
@@ -194,6 +194,7 @@ async def me(
         avatar=signed_in.avatar if signed_in else None,
         expires_at=signed_in.expires_at if signed_in else None,
         manages_pools=manages_pools,
+        is_owner=user_id is not None and user_id in settings.owner_ids,
     )
 
 

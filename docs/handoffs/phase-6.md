@@ -6,7 +6,7 @@ Paste this into a fresh session to pick Timothy up after the rewrite.
 
 We rewrote `banpool-tim-gcp` as **Timothy**, a Python service on Docker Compose with
 SQLite, plus a React web UI. Read `CONTEXT.md` for the domain language, `PLAN.md` for the
-plan, and `docs/adr/` for the ten decisions behind it. Those three are the source of
+plan, and `docs/adr/` for the eleven decisions behind it. Those three are the source of
 truth; this handoff records what they don't. `docs/handoffs/phase-0.md` through
 `phase-5.md` cover the scaffolding, the domain core, the API and enforcement, the bot and
 the migration, and are still accurate except where noted below.
@@ -17,10 +17,10 @@ cutover itself and the two deferred performance changes, both below.
 ## What phase 6 built
 
 **Backend.** OAuth login, browser sessions, and the three API additions the UI needed.
-751 Python tests (was 647), 100% line and branch coverage on every module phase 6 touched.
+763 Python tests (was 647), 100% line and branch coverage on every module phase 6 touched.
 
 **Frontend.** `web/` is now a real SPA: Vite, React 19, TypeScript, TanStack Router and
-Query, Tailwind v4, a client generated from the backend's own OpenAPI document. 56 Vitest
+Query, Tailwind v4, a client generated from the backend's own OpenAPI document. 58 Vitest
 tests against `msw`. Lint (`eslint`, type-aware, `strictTypeChecked`), type check, test
 and build all run in CI as a separate job.
 
@@ -126,11 +126,20 @@ largest untested gap in phase 6** and it is named as such below.
 
 ## The operations view
 
-`/ops` in the UI, `GET /ops/*` on the API, gated on the management guild's administrators
-— the same as the audit log. **There is deliberately no "bot owner".** A configured list
-of owner IDs would be the first authority Timothy stored rather than derived, which is the
-thing ADR 0001 exists to avoid; the people who own the pools are as close to "the
-operator" as a derived model gets.
+`/ops` in the UI, `GET /ops/*` on the API, gated on **`TIMOTHY_OWNER_IDS`** — whoever runs
+the deployment, usually one Discord ID (ADR 0011).
+
+It was first gated on the management guild's administrators, and that was the wrong
+reading of who those people are: administering the management guild makes somebody
+responsible for the *pools*, not for the deployment, and a guild can have several
+administrators. `OWNER_IDS` is the first requirement in the table that is not derived from
+Discord, and ADR 0011 draws the line between it and the in-app RBAC ADR 0001 rejected —
+briefly, it is configuration sitting beside `MANAGEMENT_GUILD_ID` rather than a stored
+grant, it only ever narrows, and it appears against exactly one operation.
+
+Unset closes `/ops` for everybody and never falls back. A mistyped ID does the same, and
+the symptom is a 403 rather than an error — that is the first thing to check if the
+Operations tab goes missing.
 
 It was built for the cutover specifically. Every panel answers a question somebody asks at
 2am: is dry run still on, did the workers stop, how far through the sweep are we, which
@@ -230,7 +239,9 @@ Phase 5's handoff has the full arithmetic for both.
 
 The rewrite is done. The next thing is not code:
 
-1. **Rotate the internal token**, and generate the OAuth client secret fresh.
+1. **Rotate the internal token**, generate the OAuth client secret fresh, and set
+   `TIMOTHY_OWNER_IDS` to your own Discord user ID — without it `/ops` is closed, which
+   is the page you will want open during the cutover.
 2. **Run `docs/cutover.md`** top to bottom. It is written to be executed by somebody who
    has not read the code.
 3. **Let it run.** Then do the sweep concurrency work, with the system boring enough that

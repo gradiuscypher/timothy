@@ -162,9 +162,12 @@ jobs:
 
       # A browser with no session must be told to log in rather than let in, and the
       # login itself must fail closed when the application is not configured for it.
-      # The operator's view is the one page that reports on Timothy itself, so it is also
-      # the one that would be worth the most to somebody who should not have it.
-      - name: The operations view is behind the token and behind an administrator
+      # The operator's view is the one page that reports on Timothy itself, so it is the
+      # one worth the most to somebody who should not have it. `TIMOTHY_OWNER_IDS` is
+      # unset in this job, which must close it rather than fall back to anybody
+      # (ADR 0011) — and that fallback is precisely the failure nothing else would show,
+      # because the page would simply keep working for the wrong people.
+      - name: The operations view is behind the token, and closed with no owner set
         run: |
           docker compose exec -T web sh -c '
             wget -qS -O /dev/null http://127.0.0.1/api/ops/overview 2>&1 \
@@ -172,14 +175,22 @@ jobs:
           '
           docker compose exec -T backend python -c "
           import sys, urllib.request, urllib.error
-          request = urllib.request.Request(
-              'http://localhost:8000/ops/overview',
-              headers={'Authorization': 'Bearer ci-placeholder', 'X-Timothy-Actor': 'system'})
-          try:
-              urllib.request.urlopen(request)
-          except urllib.error.HTTPError as refused:
-              sys.exit(0 if refused.code == 403 else f'expected 403, got {refused.code}')
-          sys.exit('Timothy was allowed to read its own operations view')
+
+          def refusal(actor):
+              request = urllib.request.Request(
+                  'http://localhost:8000/ops/overview',
+                  headers={'Authorization': 'Bearer ci-placeholder',
+                           'X-Timothy-Actor': actor})
+              try:
+                  urllib.request.urlopen(request)
+              except urllib.error.HTTPError as refused:
+                  return refused.code
+              return 200
+
+          for actor in ('system', 'user:242024455190577152'):
+              code = refusal(actor)
+              if code != 403:
+                  sys.exit(f'{actor} got {code} from /ops/overview, expected 403')
           "
 
       - name: A browser is not signed in, and login is closed until it is configured

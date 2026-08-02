@@ -7,6 +7,10 @@ these — looking up why a user is listed should eventually be open to a subscri
 guild's own moderators — and asks that it be a change to one rule rather than a hunt
 through handlers. So the rules are a table, and the handlers name an :class:`Operation`.
 
+One rule is not derived from Discord, and is marked as such: `OWNER` names whoever runs
+this deployment, because that is not a fact Discord has (ADR 0011). It is configuration
+sitting beside `MANAGEMENT_GUILD_ID`, and it only ever narrows.
+
 The table is also read *before* anything is resolved. Each requirement says which single
 fact about the caller has to be established, so a request that only needs the management
 guild checked never pays for a scan of every guild Timothy is in.
@@ -63,16 +67,28 @@ class Requirement(StrEnum):
     the operations that follow from the bot joining or leaving a guild, where there is no
     human in the loop. The service token is the whole of the check."""
 
+    OWNER = "owner"
+    """Named in `TIMOTHY_OWNER_IDS` — whoever runs this deployment (ADR 0011).
+
+    The only requirement here that is not a question for Discord, because "who operates
+    this instance" is not a fact Discord has. It is deployment configuration, like
+    `MANAGEMENT_GUILD_ID` beside it, and it only ever narrows: it gates one read-only
+    view that would otherwise have been open to every administrator of the management
+    guild.
+
+    Costs no Discord call at all, which makes it the cheapest check in the table.
+    """
+
 
 REQUIREMENTS: Final[Mapping[Operation, Requirement]] = {
     Operation.MANAGE_POOLS: Requirement.MANAGEMENT_ADMIN,
     Operation.MANAGE_LISTINGS: Requirement.MANAGEMENT_ADMIN,
     Operation.READ_AUDIT_LOG: Requirement.MANAGEMENT_ADMIN,
-    # The operator's view of Timothy itself. The management guild's administrators are as
-    # close to "the operator" as a model that derives every permission from Discord gets;
-    # a configured list of owner IDs would be the first authority Timothy stored rather
-    # than derived, and ADR 0001 is about not doing that.
-    Operation.READ_OPS: Requirement.MANAGEMENT_ADMIN,
+    # The operator's view of Timothy itself: the queue, what is failing everywhere, what
+    # the settings actually are. Administering the pool server does not make somebody the
+    # person running the deployment, and this is the one screen where that distinction is
+    # worth drawing (ADR 0011).
+    Operation.READ_OPS: Requirement.OWNER,
     # ADR 0001's known future relaxation: to a subscribing guild's own moderators.
     Operation.READ_POOLS: Requirement.ANY_GUILD_MEMBER,
     Operation.MANAGE_SUBSCRIPTIONS: Requirement.TARGET_GUILD_ADMIN,
@@ -107,6 +123,7 @@ class PermissionContext:
     management_admin: bool = False
     target_guild_admin: bool = False
     any_guild_member: bool = False
+    owner: bool = False
 
 
 def requirement(operation: Operation) -> Requirement:
@@ -131,4 +148,5 @@ def allows(operation: Operation, context: PermissionContext) -> bool:
         Requirement.MANAGEMENT_ADMIN: context.management_admin,
         Requirement.TARGET_GUILD_ADMIN: context.target_guild_admin,
         Requirement.ANY_GUILD_MEMBER: context.any_guild_member,
+        Requirement.OWNER: context.owner,
     }[needed]

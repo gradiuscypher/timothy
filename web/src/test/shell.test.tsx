@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { makeRouter } from "@/router";
 
-import { MEMBER, SIGNED_IN, get, mockApi, renderWithQuery, server } from "./harness";
+import { MEMBER, OWNER, SIGNED_IN, get, mockApi, renderWithQuery, server } from "./harness";
 
 mockApi();
 
@@ -52,6 +52,27 @@ describe("the shell", () => {
 
     expect(await screen.findByRole("link", { name: "Pools" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Audit log" })).toBeInTheDocument();
+  });
+
+  it("does not offer the operations view to somebody who merely owns pools", async () => {
+    // Running the deployment and owning the pools are different jobs (ADR 0011). This is
+    // the one place in the UI where that shows.
+    server.use(get("/auth/me", SIGNED_IN), get("/guilds", []), get("/pools", []));
+
+    renderApp();
+
+    await screen.findByRole("link", { name: "Pools" });
+    expect(screen.queryByRole("link", { name: "Operations" })).not.toBeInTheDocument();
+  });
+
+  it("offers it to whoever runs the deployment", async () => {
+    server.use(get("/auth/me", OWNER), get("/guilds", []));
+
+    renderApp();
+
+    expect(await screen.findByRole("link", { name: "Operations" })).toBeInTheDocument();
+    // Owning the deployment is not owning the pools, and the nav says so both ways.
+    expect(screen.queryByRole("link", { name: "Pools" })).not.toBeInTheDocument();
   });
 
   it("hides them from somebody who does not", async () => {

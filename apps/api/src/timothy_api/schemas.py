@@ -491,6 +491,10 @@ class SignedInRead(BaseModel):
     """Whether this person administers the management guild, and so owns pools and
     listings. A hint for drawing the navigation — every route resolves it again."""
 
+    is_owner: bool
+    """Whether this person is named in `TIMOTHY_OWNER_IDS`, and so may see the operations
+    view (ADR 0011). Also only a hint: `/ops/*` checks it again for itself."""
+
 
 class AuditLogRead(BaseModel):
     """One line of the append-only record."""

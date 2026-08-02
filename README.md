@@ -119,8 +119,12 @@ and JavaScript numbers are not.
 
 ## Watching it run
 
-`/ops` in the web UI, for administrators of the management guild. It answers the
-questions that come up during a cutover and afterwards: is dry run still on, are the
+`/ops` in the web UI, for whoever is named in `TIMOTHY_OWNER_IDS` — set that to your own
+Discord user ID. Administering the management server makes somebody responsible for the
+pools, not for Timothy itself, so this is a separate and much smaller list (ADR 0011).
+Unset closes the page for everybody; it never falls back.
+
+It answers the questions that come up during a cutover and afterwards: is dry run still on, are the
 workers running, how far through the sweep is it, which server is producing all the
 failures, and what is stuck in the queue.
 

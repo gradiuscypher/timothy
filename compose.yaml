@@ -15,6 +15,9 @@ services:
       TIMOTHY_DISCORD_TOKEN: ${TIMOTHY_DISCORD_TOKEN:?set TIMOTHY_DISCORD_TOKEN in .env}
       TIMOTHY_INTERNAL_TOKEN: ${TIMOTHY_INTERNAL_TOKEN:?set TIMOTHY_INTERNAL_TOKEN in .env}
       TIMOTHY_MANAGEMENT_GUILD_ID: ${TIMOTHY_MANAGEMENT_GUILD_ID:?set TIMOTHY_MANAGEMENT_GUILD_ID in .env}
+      # Whoever runs this deployment (ADR 0011). Unset closes the operations view for
+      # everybody rather than falling back to the management guild's administrators.
+      TIMOTHY_OWNER_IDS: ${TIMOTHY_OWNER_IDS:-}
       # The web UI's login. Unset closes it — `/auth/login` answers 503 and says what is
       # missing — rather than opening anything, so the stack still comes up without them.
       TIMOTHY_DISCORD_CLIENT_ID: ${TIMOTHY_DISCORD_CLIENT_ID:-}
