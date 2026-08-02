@@ -42,6 +42,55 @@ docker compose up --build
 No service publishes a port. The Cloudflare Tunnel is the only ingress and its single
 origin is `http://web:80`, which serves the SPA and proxies `/api` to the backend.
 
+### Setting up the tunnel
+
+You need a domain whose nameservers already point at Cloudflare. The tunnel is
+*remotely managed* — `compose.yaml` runs `cloudflared tunnel run` with a token and no
+local config file, so everything below is done in the dashboard and nothing is committed.
+
+1. **Zero Trust dashboard** → Networks → Tunnels → **Create a tunnel** → **Cloudflared**.
+   Name it (`timothy` is fine) and save.
+2. Cloudflare shows an install command with a long token in it. You want **only the
+   token** — the part after `--token`. Put it in `.env`:
+
+   ```sh
+   CLOUDFLARE_TUNNEL_TOKEN=eyJhIjoi...
+   ```
+
+   Ignore the rest of the install command; the container is already in `compose.yaml`.
+3. On the tunnel's **Published application routes** tab, add one route:
+
+   | Field | Value |
+   | --- | --- |
+   | Subdomain | `timothy` (or whatever you like) |
+   | Domain | your domain |
+   | Type | `HTTP` |
+   | URL | `web:80` |
+
+   `web` is the compose service name — cloudflared resolves it on the compose network, so
+   this stays internal and no port is ever published. **Type is `HTTP`, not `HTTPS`:** TLS
+   is terminated by Cloudflare at the edge, and nginx inside the network speaks plain
+   HTTP.
+
+   Leave the extra settings alone. In particular do **not** set an `HTTP Host Header`
+   override — Timothy's CSRF check compares the browser's `Origin` against the `Host` it
+   received, and rewriting the host would refuse every state-changing request from the UI.
+4. Cloudflare creates the DNS record for you. Set the matching base URL in `.env`:
+
+   ```sh
+   TIMOTHY_PUBLIC_BASE_URL=https://timothy.yourdomain.com
+   ```
+5. `docker compose up --build`. `cloudflared` connects outbound, so there are no inbound
+   firewall rules and nothing to forward.
+
+Because the tunnel terminates TLS, the session cookie's `Secure` flag works and
+`TIMOTHY_SESSION_COOKIE_SECURE` can stay at its default of `true`.
+
+Optionally you can put a Cloudflare Access policy in front of the hostname for a second
+layer in front of everything. It composes fine — the Discord login is a browser navigation
+and a signed-in Access session carries through the callback — but it is a separate login
+to get past, so it is worth deciding deliberately rather than by accident.
+
 ### The web UI's login
 
 `TIMOTHY_DISCORD_CLIENT_ID`, `TIMOTHY_DISCORD_CLIENT_SECRET` and
@@ -56,6 +105,44 @@ nothing else.
 Timothy stores no Discord user tokens. The access token is used once, at login, to ask who
 you are and which servers you are in, and then discarded — what you may *do* is resolved
 with the bot token on every request (ADR 0001, ADR 0010).
+
+### Trying it out before the cutover
+
+The old bot is still running on the same Discord application, so a local stack pointed at
+the same token is not a sandbox — it is a second instance of a live bot. Three settings
+decide whether that is safe, and the defaults are not the safe ones:
+
+| Setting | Set to | Because |
+| --- | --- | --- |
+| `TIMOTHY_SYNC_COMMANDS` | `false` | On startup the bot **replaces** the application's slash commands. With the default `true` it overwrites the surface real moderators are using right now. |
+| `TIMOTHY_GATEWAY_ENABLED` | `false` | Otherwise you have two gateway sessions on one token, both receiving `GUILD_MEMBER_ADD`. |
+| `TIMOTHY_WORKERS_ENABLED` | `false` | Otherwise the sweep scheduler starts immediately and begins working through every guild, at two Discord calls a second, for days. |
+
+Keep `TIMOTHY_DRY_RUN=true` as well. It is the default and it fails safe, but it is the
+thing standing between a test click and a real ban.
+
+The cleanest option is a **separate Discord application** — its own bot invited to one
+test server — which removes all of the above. The token is the only thing that has to
+differ.
+
+With the gateway off, nothing registers guilds, so `/guilds` starts empty. Register one by
+hand — it is also a decent end-to-end check of the tunnel, nginx and the backend in one
+call:
+
+```sh
+curl -X PUT https://timothy.yourdomain.com/api/guilds/<guild id> \
+     -H "Authorization: Bearer $TIMOTHY_INTERNAL_TOKEN" \
+     -H "X-Timothy-Actor: system"
+```
+
+Then sign in at `https://timothy.yourdomain.com`. What you can see depends on real Discord
+permissions: the server pages need `ADMINISTRATOR` in that server, the pool pages need it
+in `TIMOTHY_MANAGEMENT_GUILD_ID`, and `/ops` needs your user ID in `TIMOTHY_OWNER_IDS`.
+
+Two things to be aware of: the tunnel hostname is a **public URL**, not localhost — anyone
+who finds it reaches the login page, which is what the internal token and the session are
+there for. And the stack writes to a Docker volume, so `docker compose down -v` is how you
+throw the test database away.
 
 ## Migrating from the old bot
 
