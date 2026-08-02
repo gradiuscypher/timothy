@@ -10,10 +10,17 @@ across the interval rather than queueing them all at midnight, so the Discord ca
 spread too and no single tick is the expensive one. That needs no scheduler of its own:
 the jobs are simply dated forward.
 
-**A guild with a sweep still pending is skipped.** Otherwise a guild slow enough to take
+**A guild with a sweep outstanding is skipped.** Otherwise a guild slow enough to take
 longer than the interval accumulates a queue it can never work off. Its outstanding job
 will pick up whatever arrived in the meantime — the candidates are computed when the job
 runs, not when it was queued.
+
+Outstanding means pending *or running*, and the second half is not decoration. A guild
+sweep is a `fetch_member` per candidate, and Discord paces those at a couple a second per
+guild — so a guild with a few thousand listed users takes half an hour, comfortably longer
+than any sensible interval. Counting only pending jobs let every such guild pick up a
+second job while its first was still running, which is exactly the accumulation this is
+here to prevent. Found by running a real sweep against real data, not by reading it.
 """
 
 from __future__ import annotations
@@ -35,6 +42,9 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from timothy_api.settings import Settings
+
+OUTSTANDING = (JobStatus.PENDING, JobStatus.RUNNING)
+"""A sweep that has not finished. Either state means the guild already has one."""
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +85,7 @@ class Sweeper:
                 await session.scalars(
                     select(Job.payload["guild_id"].as_integer()).where(
                         Job.kind == jobs.JobKind.ENFORCE_GUILD.value,
-                        Job.status == JobStatus.PENDING,
+                        Job.status.in_(OUTSTANDING),
                     )
                 )
             )

@@ -27,6 +27,7 @@ from .conftest import (
     Enforcement,
     headers,
     jobs_of,
+    set_job_status,
     wait_until,
 )
 
@@ -81,6 +82,28 @@ def test_a_guild_with_a_sweep_still_pending_is_skipped(
 
     assert enforcement.sweep() == 0
     assert len(sweeps(settings)) == 2
+
+
+def test_a_guild_whose_sweep_is_still_running_is_skipped(
+    registered: TestClient, enforcement: Enforcement, settings: Settings
+) -> None:
+    """The half of that guard that reading the code did not supply.
+
+    A guild sweep is a `fetch_member` per candidate and Discord paces those at a couple a
+    second per guild, so a guild with a few thousand listed users takes half an hour —
+    longer than any sensible interval. Counting only *pending* jobs let it pick up a
+    second one while the first was still running, which a real sweep against real data
+    duly did.
+    """
+    enforcement.sweep()
+    still_running, finished = sweeps(settings)
+    set_job_status(settings, still_running["id"], "running")
+    set_job_status(settings, finished["id"], "done")
+
+    assert enforcement.sweep() == 1
+    assert [job["payload"]["guild_id"] for job in sweeps(settings)[2:]] == [
+        finished["payload"]["guild_id"]
+    ]
 
 
 def test_a_finished_sweep_lets_the_next_round_through(

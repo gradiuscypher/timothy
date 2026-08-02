@@ -15,7 +15,7 @@ bot, and are still accurate except where noted below.
 
 ## What phase 5 built
 
-`migration/`, a fourth workspace member (`timothy-migration`). 139 tests of its own, 637
+`migration/`, a fourth workspace member (`timothy-migration`). 139 tests of its own, 642
 in the workspace, all four checks clean (`ruff format`, `ruff check`, `ty check`,
 `pytest`), 100% line and branch coverage on every migration module.
 
@@ -57,7 +57,7 @@ it covers pairs nobody has seen in years.
 
 `diff` is **dynamic and partial**: it reads `enforcement.dry_run` audit rows from a
 rehearsal and classifies each. It adds live membership, live permissions and the workers
-actually running. It cannot see silence — a skip writes nothing at all (ADR 0009) — so
+actually running. It cannot see silence — a skip writes no *audit* row — so
 under-enforcement is invisible to it. That gap is exactly what `verify` closes.
 `test_the_diff_cannot_see_silence` states the limit as a test rather than as a comment.
 
@@ -77,8 +77,10 @@ policy changes with ADRs behind them, and an operator agrees to the counts by ha
 - **The old `delete_pool` cascaded nothing.** It deleted one document. Every pool ever
   deleted left its listings and its subscriptions behind — and `is_guild_subscribed`
   matched the dead name, and `get_user_bans` never joined to `banpools`, so those
-  listings were still being enforced. Expect orphans in quantity, and expect a
-  `no longer enforced` count that is not zero.
+  listings were still being enforced. That predicted orphans in quantity — and the real
+  dump had **none**: all five pools are live and every listing and subscription points at
+  one. The `no longer enforced` bucket came back empty. The handling is still right, and
+  the prediction was wrong.
 - **`creator_id` of `"0"` becomes `Actor.system()`.** The old bot used it for its own
   actions and the previous SQLite → Mongo migration passed it as the author of every row
   it wrote. That is exactly what `actors.py` says `system` is for.
@@ -122,6 +124,75 @@ sweep, and discord.py logs `Unclosed client session` from `asyncio` after a fail
 Harmless in CI and invisible in production, where the login succeeds. It is not covered by
 the "shuts its workers down cleanly" step, which runs earlier.
 
+## What the rehearsal found
+
+The tooling was built, then run against the production dump and a real Discord token in
+dry run. `verify` covered all 123 guilds: 378,348 pairs, **zero unexplained findings**,
+and the only differences were 2,935 `now warns` — all in one guild. A fractional dry run
+against that guild then exercised the workers end to end and the diff came back clean.
+
+Four things came out of it that reading the code had not:
+
+**`fetch_member` runs at about two per second per guild.** Measured, not estimated: 40
+lookups in 15.7s in a burst, and 2,995 in 28 minutes sustained. The first sweep after
+cutover is ~347,000 lookups — **about 48 hours** — because `enforcement_outcomes` starts
+empty and every listed user is a candidate. From the second round it is nearly free.
+
+That is a long tail rather than an outage: new joins are covered immediately by the
+gateway path, and the backlog is mostly discovering that the old bot already banned
+everyone it was going to. `docs/cutover.md` now says so and sizes it. The real fix, if two
+days ever becomes intolerable, is below.
+
+**The warn burst is standing exposure, not a burst.** 2,935 users would be warned about in
+that guild *if present*; one actually was. The rest stay armed and trickle out as people
+join. Worth telling that guild what changes, not worth bracing for.
+
+**The breaker counted bans only.** So a warn-level subscription had no ceiling at all, and
+that guild was sitting behind an uncapped path to 2,935 notifications. Fixed: the limit now
+counts enforcement actions, bans and notifications sharing one per-guild budget. ADR 0007's
+consequences record it.
+
+**The sweep's skip-guard only looked at pending jobs.** A guild whose sweep is still
+*running* — which, at half an hour per guild, is most of them — picked up a second job each
+round. Fixed to include `RUNNING`. Both fixes have tests that fail without them.
+
+## A correction to ADR 0009
+
+The ADR said dry run "writes no outcomes at all". It does write `skipped_exception`, and
+the rehearsal surfaced three real ones. The ADR was wrong, not the code: that row is not an
+attribution, no revert can act on it (reverting keys strictly on `banned`), and it stops
+the sweep re-asking Discord about excepted users every round — which at two lookups a
+second is not free. ADR 0009 now carves it out explicitly and `test_an_exception_is_still_recorded`
+pins it, because it looks like a leak until you know why it is not.
+
+`docs/cutover.md`'s tripwire was corrected with it. A non-zero `enforcement_outcomes` in
+dry run is not on its own evidence that dry run is off; the *statuses* are what to check.
+
+## The one open decision: bulk member listing
+
+The sweep asks Discord "is this user in this guild?" once per candidate. Discord also
+offers `GET /guilds/{id}/members?limit=1000`, which pages the whole membership — one
+request per thousand members, regardless of how many users are listed.
+
+| approach | requests for the full first round |
+| --- | --- |
+| per-user (today) | 347,407 → ~48 hours |
+| bulk, guilds of 10k members | 1,230 → ~10 minutes |
+| bulk, guilds of 200k members | 24,600 → ~3.5 hours |
+
+Bulk wins whenever a guild has fewer than 2.8 million members, which is every guild that
+exists. It was left undone deliberately, because it is not a cutover setting:
+
+- it needs a sixth `DiscordPort` operation, and ADR 0007 keeps that surface at five on
+  purpose — "narrow enough to read in one sitting, and narrow enough for a fake to
+  implement honestly";
+- it depends on the privileged `GUILD_MEMBERS` intent, which `.env.example` already
+  requires for `GUILD_MEMBER_ADD` but which would become load-bearing for enforcement too;
+- it changes what a sweep *is* — a diff against a membership snapshot rather than a series
+  of questions — and that deserves its own ADR.
+
+Worth doing before the deployment grows. Not worth doing between now and cutover.
+
 ## Carried forward
 
 - **Nothing has actually been migrated.** Phase 5 built and rehearsed the tooling; the
@@ -138,7 +209,9 @@ the "shuts its workers down cleanly" step, which runs earlier.
 - **There is still no `GET /guilds`.** Phase 6 wants it. Phase 5 did not need it — the
   snapshot comes from Discord, not from Timothy.
 - **GitHub Actions layer caching**, still deferred. Comment marks the spot in `ci.yml`.
-- **The token is a single shared secret with no rotation story** (ADR 0008).
+- **The token is a single shared secret with no rotation story** (ADR 0008), and the
+  production one was pasted into a session transcript during the rehearsal. **Rotate it.**
+- **Bulk member listing**, above — the standing answer to the 48-hour cold start.
 - **`is_member_of_any` still costs a scan** per non-member per TTL. Unchanged since
   phase 2.
 - **`web/` is still a placeholder.** That is phase 6.

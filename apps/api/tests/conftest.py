@@ -273,6 +273,23 @@ def jobs_of(settings: Settings) -> list[dict[str, Any]]:
         engine.dispose()
 
 
+def set_job_status(settings: Settings, job_id: int, status: str) -> None:
+    """Force a job's status, for the states no test can reach by waiting.
+
+    A job is only `running` while a worker holds it, which is not a moment a test can
+    stand still in.
+    """
+    engine = create_engine(sync_url(settings.database_url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE jobs SET status = :status WHERE id = :id"),
+                {"status": status, "id": job_id},
+            )
+    finally:
+        engine.dispose()
+
+
 def insert_job(settings: Settings, kind: str, payload: dict[str, int]) -> None:
     """Put a job on the queue directly.
 

@@ -151,25 +151,74 @@ Put the imported database where the backend will find it, and bring the stack up
 run **on** and the old bot **still running**. Nothing about this step is exclusive; both
 bots can watch the same guilds, because Timothy issues nothing.
 
+**Start with the workers off, put the database in place, then turn them on.** Starting
+first and swapping afterwards means restarting mid-sweep, which strands a running job and
+queues a duplicate for that guild. Two steps avoid it:
+
 ```sh
-cp ./cutover/timothy.db /var/lib/timothy/timothy.db   # or into the compose volume
-TIMOTHY_DRY_RUN=true docker compose up -d
+TIMOTHY_WORKERS_ENABLED=false docker compose up -d --wait backend
+
+docker compose cp ./cutover/timothy.db backend:/data/imported.db
+docker compose exec -T -u root backend sh -c '
+  rm -f /data/timothy.db /data/timothy.db-wal /data/timothy.db-shm
+  mv /data/imported.db /data/timothy.db
+  chown timothy:timothy /data/timothy.db
+'
+
+TIMOTHY_WORKERS_ENABLED=true docker compose up -d --force-recreate --wait backend
 ```
+
+`--force-recreate` is needed for the second start: `docker compose restart` reuses the
+container's original environment and would leave the workers off.
+
+**Run the backend alone.** Do not start `bot` for the rehearsal. It uploads the slash
+command tree on startup, which would overwrite the live application's command surface, and
+it would open a second gateway connection alongside the old bot. The sweep lives in the
+backend and uses REST only.
 
 Check `.env`:
 
 - `TIMOTHY_DRY_RUN=true` — it fails safe, so anything unreadable also means on.
 - `TIMOTHY_AUTO_SUBSCRIBE_POOL` matches the `--global-pool` you imported with.
 - `TIMOTHY_MANAGEMENT_GUILD_ID` is the real one.
-- `TIMOTHY_SYNC_COMMANDS` — leave it on only if this instance owns the Discord
-  application's command surface.
+- `TIMOTHY_SYNC_COMMANDS` — irrelevant here, since the bot is not running.
 
-Leave it for at least one full `TIMOTHY_SWEEP_INTERVAL`, and preferably several hours, so
-the sweep has been round every guild and some real joins have happened.
+### How long a round actually takes
 
-Dry run writes `enforcement.dry_run` rows to the audit log and **no** enforcement
-outcomes. It also does not dedupe — with no outcome row written there is nothing to dedupe
-against — so the same pair restated every sweep is expected, not a fault.
+Longer than you will guess. A guild sweep is one `fetch_member` per candidate, and Discord
+paces those at roughly **two per second per guild** — measured, not estimated. A guild with
+3,000 listed users therefore takes around half an hour, and jobs run one at a time.
+
+For the production data that is **~347,000 lookups, about 48 hours** for one full round.
+Rehearse against a *subset*: trim `guilds.json` to a handful of representative guilds,
+import that to a separate database, and dry-run against it. `verify` has already covered
+every guild statically, so what a subset gives up is fan-out volume, not correctness.
+
+Set `TIMOTHY_SWEEP_INTERVAL` longer than a round takes, or rounds overlap.
+
+### What dry run does and does not write
+
+It writes `enforcement.dry_run` rows to the audit log. It writes **no `banned` and no
+`warned` outcome** — that is the attribution ADR 0009 exists to withhold.
+
+It *does* write `skipped_exception` outcomes, and that is correct: those say the guild
+vouched for a user, which is true either way, and no revert can act on them because
+reverting keys strictly on `banned`. **A non-zero `enforcement_outcomes` count is
+therefore not on its own a sign that dry run is off.** Check the statuses:
+
+```sh
+docker compose exec -T backend python -c "
+import sqlite3
+print(dict(sqlite3.connect('/data/timothy.db').execute(
+    'SELECT status, COUNT(*) FROM enforcement_outcomes GROUP BY status')))
+"
+```
+
+Anything other than `skipped_exception` in dry run means dry run is not on. Stop.
+
+Intentions do not dedupe — with no `banned` or `warned` row to settle a user, the same
+pair is restated every round. Excepted users are the exception in both senses: they settle
+and drop out.
 
 ## 6. Diff the rehearsal
 
@@ -202,13 +251,35 @@ In this order:
 1. **Stop the old bot.** From here the two systems must not both be live: the old bot
    creates an exception on every unban, and Timothy's reverts would feed it.
 2. `TIMOTHY_DRY_RUN=false`, restart the backend. This is the irreversible one.
-3. Watch the first sweep. `enforcement_outcomes` starts filling; the audit log switches
-   from `enforcement.dry_run` to `enforcement.ban` and `enforcement.warn`.
-4. Watch for `enforcement.breaker_tripped`. `TIMOTHY_ENFORCEMENT_BURST_LIMIT` is 25 bans
-   per guild per run, and the first real sweep after cutover is the run most likely to
-   reach it in a guild that has drifted. A tripped breaker pauses that guild and asks for
-   a human, which is what it is for — resume it deliberately, do not raise the limit to
-   get past it.
+3. Watch the first sweep. `enforcement_outcomes` starts filling with `banned` and
+   `warned`; the audit log switches from `enforcement.dry_run` to `enforcement.ban` and
+   `enforcement.warn`.
+4. Watch for `enforcement.breaker_tripped`. `TIMOTHY_ENFORCEMENT_BURST_LIMIT` is 25
+   enforcement actions — bans and notifications together — per guild per run, and the
+   first real sweep after cutover is the run most likely to reach it in a guild that has
+   drifted. A tripped breaker pauses that guild and asks for a human, which is what it is
+   for: resume it deliberately, do not raise the limit to get past it.
+
+### The first round takes about two days, and that is survivable
+
+`enforcement_outcomes` starts empty, so every listed user in every subscribed pool is a
+candidate and the first round pays the full ~347,000 lookups — roughly 48 hours. From the
+second round on it is nearly free, because settled outcomes drop out of the candidate set.
+
+That is a long tail, not an outage, and it is worth being clear why:
+
+- **New joins are covered from minute one.** The gateway path is reactive and immediate
+  (ADR 0004); it does not wait for a sweep.
+- **The backlog is mostly discovering that nothing needs doing.** Everyone the old bot was
+  going to ban, it already banned — so they are absent, and the sweep skips them. What the
+  first round is really hunting is the handful the old bot *failed* to ban.
+- **Those have been present for months already.** Another day and a half is not the risk it
+  sounds like.
+
+Do not raise `TIMOTHY_SWEEP_INTERVAL` down to hurry it along; rounds would overlap and the
+guard would simply skip guilds still working. If two days is genuinely too slow, the fix is
+a bulk member listing rather than a lookup per user — see the phase 5 handoff, which sizes
+it. That is a code change, not a cutover setting.
 
 ### If it goes wrong
 

@@ -61,9 +61,9 @@ if TYPE_CHECKING:
 
 BREAKER_NOTICE = (
     "**Enforcement paused here.**\n"
-    "Timothy was about to issue more than {limit} bans in this server in a single run, "
-    "which is the safety limit. Nothing further has been enforced. Review the recent "
-    "listings, then resume enforcement to continue."
+    "Timothy was about to take more than {limit} enforcement actions in this server in a "
+    "single run, which is the safety limit. Nothing further has been enforced. Review the "
+    "recent listings, then resume enforcement to continue."
 )
 """What a guild is told when the breaker trips. It says what stopped and what to do,
 because the guild's moderators are the ones who have to decide whether the burst was
@@ -78,14 +78,33 @@ class Run:
     it exists to catch — a bad migration, an accidental bulk listing — arrives as one
     fan-out. A guild that legitimately takes twenty-five bans an hour for hours is not
     what this is looking for.
+
+    It counts *actions*, not bans. A warn-level subscription turns the same bad listing
+    into a burst of notifications rather than a burst of bans, and a channel receiving
+    three thousand messages is the same accident wearing a different hat. Counting only
+    bans left the one guild in the migration data holding three pools at `warn` with no
+    ceiling at all.
     """
 
-    bans_by_guild: dict[int, int] = field(default_factory=dict)
+    actions_by_guild: dict[int, int] = field(default_factory=dict)
     halted: set[int] = field(default_factory=set)
 
     def is_halted(self, guild_id: int) -> bool:
         """Whether the breaker has already stopped this run in this guild."""
         return guild_id in self.halted
+
+    def take(self, guild_id: int, limit: int) -> bool:
+        """Claim one action against this guild's budget for the run.
+
+        `False` when the budget is spent, which is the caller's cue to trip the breaker.
+        Claimed before the action rather than after, so the limit is how many may land
+        and the one past it is stopped instead.
+        """
+        taken = self.actions_by_guild.get(guild_id, 0)
+        if taken >= limit:
+            return False
+        self.actions_by_guild[guild_id] = taken + 1
+        return True
 
 
 class Enforcer:
@@ -125,7 +144,7 @@ class Enforcer:
             case Ban(justifications=justifications):
                 await self._ban(session, run, request, justifications)
             case Warn(justifications=justifications):
-                await self._warn(session, request, justifications)
+                await self._warn(session, run, request, justifications)
             case Skip(reason=reason):
                 await self._skip(session, request, reason)
         return decision
@@ -140,12 +159,11 @@ class Enforcer:
         justifications: tuple[PoolListing, ...],
     ) -> None:
         guild_id = request.guild.guild_id
-        if run.bans_by_guild.get(guild_id, 0) >= self.settings.enforcement_burst_limit:
+        if not run.take(guild_id, self.settings.enforcement_burst_limit):
             await self._trip_breaker(session, run, guild_id)
             return
 
         reason = ban_audit_reason(justifications)
-        run.bans_by_guild[guild_id] = run.bans_by_guild.get(guild_id, 0) + 1
 
         if self.settings.dry_run:
             self._audit_dry_run(session, request, action="ban", detail={"reason": reason})
@@ -185,6 +203,7 @@ class Enforcer:
     async def _warn(
         self,
         session: AsyncSession,
+        run: Run,
         request: EnforcementRequest,
         justifications: tuple[PoolListing, ...],
     ) -> None:
@@ -196,6 +215,10 @@ class Enforcer:
             return
 
         for listing in justifications:
+            if not run.take(guild_id, self.settings.enforcement_burst_limit):
+                await self._trip_breaker(session, run, guild_id)
+                return
+
             content = warn_message(user_id=request.user_id, listing=listing)
             if self.settings.dry_run:
                 self._audit_dry_run(

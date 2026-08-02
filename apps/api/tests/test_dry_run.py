@@ -101,6 +101,33 @@ def test_no_attribution_is_written(
     assert outcomes_of(settings) == []
 
 
+def test_an_exception_is_still_recorded(
+    pool: TestClient, discord: FakeDiscord, enforcement: Enforcement, settings: Settings
+) -> None:
+    """The carve-out ADR 0009 makes explicit, pinned so nobody closes it as a bug.
+
+    `skipped_exception` is not an attribution — it says the guild vouched for this user,
+    which is true whether or not dry run is on, and which no revert can act on because
+    reverting keys strictly on a `banned` outcome. It also stops the sweep asking Discord
+    about that user every round, which at a couple of member lookups a second per guild is
+    not a rounding error.
+
+    Found by a rehearsal against production data, where three real vouches turned up in
+    the outcomes table and looked, briefly, like dry run leaking.
+    """
+    listed_and_subscribed(pool, discord)
+    pool.put(
+        f"/guilds/{GUILD}/exceptions/{LISTED_USER}",
+        json={"reason": "vouched for"},
+        headers=headers(GUILD_ADMIN),
+    )
+
+    enforcement.drain()
+
+    assert [row["status"] for row in outcomes_of(settings)] == ["skipped_exception"]
+    assert not discord.calls_of("ban")
+
+
 def test_a_warning_is_described_rather_than_posted(
     pool: TestClient, discord: FakeDiscord, enforcement: Enforcement
 ) -> None:

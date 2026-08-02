@@ -187,3 +187,72 @@ def test_the_bans_that_landed_are_still_attributed(
     enforcement.drain()
 
     assert len([row for row in outcomes_of(settings) if row["status"] == "banned"]) == LIMIT
+
+
+# -- the same rail, for notifications ----------------------------------------
+
+
+def subscribe_at_warn(client: TestClient) -> None:
+    client.put(
+        f"/guilds/{GUILD}/subscriptions/spam",
+        json={"level": "warn"},
+        headers=headers(GUILD_ADMIN),
+    )
+
+
+def test_a_warn_fan_out_past_the_limit_stops_at_the_limit(
+    crowded: TestClient, discord: FakeDiscord, enforcement: Enforcement
+) -> None:
+    """A warn-level subscription turns the same bad listing into a burst of messages
+    rather than a burst of bans, and a channel receiving three thousand of them is the
+    same accident wearing a different hat.
+
+    The migration data found this: one guild held three pools at `warn`, standing exposure
+    2,935 notifications, and nothing capped it.
+    """
+    crowded.put(
+        f"/guilds/{GUILD}/notification-channel",
+        json={"channel_id": str(CHANNEL)},
+        headers=headers(GUILD_ADMIN),
+    )
+    subscribe_at_warn(crowded)
+    enforcement.drain()
+
+    warnings = [message for message in discord.messages if "Heads up" in message.content]
+    assert len(warnings) == LIMIT
+
+
+def test_a_warn_fan_out_past_the_limit_pauses_the_guild(
+    crowded: TestClient, discord: FakeDiscord, enforcement: Enforcement
+) -> None:
+    crowded.put(
+        f"/guilds/{GUILD}/notification-channel",
+        json={"channel_id": str(CHANNEL)},
+        headers=headers(GUILD_ADMIN),
+    )
+    subscribe_at_warn(crowded)
+    enforcement.drain()
+
+    guild = crowded.get(f"/guilds/{GUILD}", headers=headers(GUILD_ADMIN)).json()
+    assert guild["enforcement_paused"] is True
+
+
+def test_bans_and_warnings_share_one_budget(
+    crowded: TestClient, discord: FakeDiscord, enforcement: Enforcement
+) -> None:
+    """The limit is on what Timothy does to a guild in one run, not on either kind
+    separately. A guild holding one pool at ban and another at warn gets one allowance
+    between them, because the accident the rail catches does not care which it is.
+    """
+    crowded.put(
+        f"/guilds/{GUILD}/notification-channel",
+        json={"channel_id": str(CHANNEL)},
+        headers=headers(GUILD_ADMIN),
+    )
+    subscribe_at_warn(crowded)
+    enforcement.drain()
+
+    warnings = sum("Heads up" in message.content for message in discord.messages)
+    bans = sum(discord.is_banned(GUILD, user_id) for user_id in CROWD)
+
+    assert warnings + bans == LIMIT
