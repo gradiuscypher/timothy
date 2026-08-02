@@ -98,3 +98,11 @@ def test_the_whole_compose_environment_starts_the_process() -> None:
 
     assert settings.sweep_interval == timedelta(days=7)
     assert settings.workers_enabled is True
+
+
+def test_a_duration_given_as_a_number_is_seconds() -> None:
+    """`.env` hands these over as strings, but nothing stops a caller constructing
+    `Settings` in Python — and a plain number there meaning nothing would be a surprise
+    in the same shape as the one that stopped the container from starting."""
+    assert Settings(sweep_interval=3600).sweep_interval == timedelta(hours=1)
+    assert Settings(permission_cache_ttl=1.5).permission_cache_ttl == timedelta(seconds=1.5)

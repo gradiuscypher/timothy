@@ -26,8 +26,10 @@ from timothy_api import __version__, errors, routers
 from timothy_api.db import Database
 from timothy_api.discord_adapter import DiscordAdapter
 from timothy_api.enforcement import Enforcer, JobContext, SelfUnbans, Sweeper, Worker
-from timothy_api.identity import require_service_token
+from timothy_api.identity import authenticate
+from timothy_api.oauth import DiscordOAuth, OAuthPort
 from timothy_api.permissions import PermissionResolver
+from timothy_api.routers import auth
 from timothy_api.settings import Settings
 from timothy_core.ports.discord import DiscordPort
 
@@ -36,9 +38,14 @@ log = logging.getLogger(__name__)
 DESCRIPTION = """\
 Shared moderation service for Discord.
 
-Callers assert identity and never authority: present the internal token as a bearer
-credential, and name the acting Discord user in `X-Timothy-Actor`. What that user may do
-is resolved against Discord itself.
+Callers assert identity and never authority. There are two ways to do it:
+
+* **Services** present the internal token as a bearer credential and name the acting
+  Discord user in `X-Timothy-Actor`.
+* **Browsers** present the session cookie `/api/auth/login` issues, which names the actor
+  itself. Sending `X-Timothy-Actor` alongside one is an error.
+
+Either way, what that user may do is resolved against Discord itself.
 
 Snowflakes — guild, user and channel IDs — are strings on the wire. They are 64-bit, and
 JavaScript numbers are not.
@@ -97,12 +104,14 @@ def create_app(
     settings: Settings | None = None,
     *,
     discord_port: DiscordPort | None = None,
+    oauth_port: OAuthPort | None = None,
 ) -> FastAPI:
     """Build the application.
 
     Args:
         settings: process configuration. Read from the environment when omitted.
         discord_port: the door to Discord. A real, lazily logged-in adapter when omitted.
+        oauth_port: the login flow. A real one over HTTPS to Discord when omitted.
     """
     resolved = settings if settings is not None else Settings()
 
@@ -121,6 +130,8 @@ def create_app(
         if port is None:
             port = DiscordAdapter.create(resolved.discord_token.get_secret_value())
 
+        login = oauth_port if oauth_port is not None else DiscordOAuth.create(resolved)
+
         self_unbans = SelfUnbans()
         enforcer = Enforcer(discord=port, settings=resolved, self_unbans=self_unbans)
         context = JobContext(sessions=database.sessions, enforcer=enforcer, settings=resolved)
@@ -128,6 +139,7 @@ def create_app(
         app.state.settings = resolved
         app.state.db = database
         app.state.discord = port
+        app.state.oauth = login
         app.state.resolver = PermissionResolver(port, ttl=resolved.permission_cache_ttl)
         app.state.self_unbans = self_unbans
         app.state.enforcer = enforcer
@@ -143,6 +155,8 @@ def create_app(
             await database.dispose()
             if isinstance(port, DiscordAdapter):
                 await port.close()
+            if isinstance(login, DiscordOAuth):
+                await login.close()
 
     app = FastAPI(
         title="Timothy",
@@ -157,7 +171,10 @@ def create_app(
         """Outside the token, because the compose healthcheck has no credentials."""
         return Health(status="ok", version=__version__)
 
-    app.include_router(routers.api, dependencies=[Depends(require_service_token)])
+    # Outside the gate, because a browser arriving for the first time has no credential
+    # to present — getting one is what these routes are for. See `routers.auth`.
+    app.include_router(auth.router)
+    app.include_router(routers.api, dependencies=[Depends(authenticate)])
     return app
 
 

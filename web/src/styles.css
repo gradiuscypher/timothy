@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+/* Tailwind v4 takes its configuration from CSS, so this file is the theme.
+
+   Two colour scales, both neutral: `surface` for chrome and `accent` for the one thing
+   on a screen that is a link or a primary action. Timothy's screens are dense tables of
+   user IDs and reasons, and colour here means "this is different", not decoration —
+   `warn` and `ban` are the only two places it carries meaning. */
+
+@theme {
+  --color-surface-0: oklch(99% 0 0);
+  --color-surface-1: oklch(97% 0.002 260);
+  --color-surface-2: oklch(93% 0.004 260);
+  --color-surface-border: oklch(88% 0.006 260);
+  --color-surface-ink: oklch(25% 0.01 260);
+  --color-surface-muted: oklch(52% 0.012 260);
+
+  --color-accent: oklch(52% 0.16 265);
+  --color-accent-ink: oklch(98% 0 0);
+
+  --color-danger: oklch(52% 0.19 25);
+  --color-warn: oklch(62% 0.15 75);
+  --color-ok: oklch(55% 0.13 155);
+}
+
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-surface-0: oklch(19% 0.008 260);
+    --color-surface-1: oklch(23% 0.01 260);
+    --color-surface-2: oklch(28% 0.012 260);
+    --color-surface-border: oklch(36% 0.014 260);
+    --color-surface-ink: oklch(94% 0.004 260);
+    --color-surface-muted: oklch(70% 0.012 260);
+
+    --color-accent: oklch(70% 0.14 265);
+    --color-accent-ink: oklch(20% 0.01 260);
+
+    --color-danger: oklch(68% 0.17 25);
+    --color-warn: oklch(76% 0.14 75);
+    --color-ok: oklch(72% 0.13 155);
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-surface-0 text-surface-ink antialiased;
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    sans-serif;
+}
+
+/* Snowflakes and reasons are compared by eye far more often than they are read, so
+   anything that is an ID is tabular and monospaced. */
+.snowflake {
+  @apply font-mono text-[0.8125rem] tabular-nums;
+}

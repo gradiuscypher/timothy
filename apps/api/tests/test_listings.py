@@ -155,6 +155,6 @@ def test_a_snowflake_survives_the_round_trip_exactly(pool: TestClient) -> None:
         headers=headers(POOL_ADMIN),
     )
 
-    listings = pool.get("/pools/spam/listings", headers=headers(POOL_ADMIN)).json()
+    page = pool.get("/pools/spam/listings", headers=headers(POOL_ADMIN)).json()
 
-    assert listings[0]["user_id"] == str(big)
+    assert page["listings"][0]["user_id"] == str(big)

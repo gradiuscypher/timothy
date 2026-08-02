@@ -243,13 +243,30 @@ class Job(Base):
 
 
 class Session(Base):
-    """A logged-in web session. Phase 6 issues these; the table lands with the schema."""
+    """A logged-in web session.
+
+    The `id` is the SHA-256 of the token the browser holds, not the token — 64 hex
+    characters, which is what the column was already sized for. A reader of this table
+    therefore cannot log in as anybody: they have the digest, and the cookie is the
+    preimage.
+
+    `guild_ids` is what Discord said the user was in at login, from the OAuth `guilds`
+    scope. It is a Discord-derived fact with a timestamp on it rather than a stored
+    grant, and it is only ever used to narrow which guilds get asked about (ADR 0010).
+    """
 
     __tablename__ = "sessions"
     __table_args__ = (Index("ix_sessions_expires_at", "expires_at"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[Snowflake]
+    username: Mapped[str] = mapped_column(String(64), default="")
+    """What to call them in the UI's corner. Saves a Discord call per page load."""
+
+    avatar: Mapped[str | None] = mapped_column(String(64), default=None)
+    """Discord's avatar hash, or `None` for the default avatar."""
+
+    guild_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     created_at: Mapped[CreatedAt]
     expires_at: Mapped[datetime]
 

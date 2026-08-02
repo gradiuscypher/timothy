@@ -13,6 +13,9 @@ dist/
 # Node
 node_modules/
 web/dist/
+# The intermediate `npm run api` pipes into openapi-typescript. The generated client
+# (web/src/api/schema.d.ts) is committed; this is not.
+web/openapi.json
 
 # Local
 .env

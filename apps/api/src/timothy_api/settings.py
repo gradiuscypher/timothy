@@ -92,6 +92,36 @@ class Settings(BaseSettings):
     Empty means the API refuses every request rather than accepting every request.
     """
 
+    # -- browser sessions ----------------------------------------------------
+
+    discord_client_id: str = ""
+    """The Discord application's client ID, for the OAuth login the web UI uses.
+
+    Empty closes login rather than opening it: `/auth/login` answers 503 and says what is
+    missing. The bot token above is a different credential for a different purpose — it
+    is Timothy acting, this is a person proving who they are.
+    """
+
+    discord_client_secret: SecretStr = SecretStr("")
+
+    public_base_url: str = ""
+    """Where a browser reaches Timothy, e.g. `https://timothy.example.com`.
+
+    Discord requires the redirect URI to be registered up front and to match exactly, so
+    it cannot be reconstructed from the incoming request: behind the tunnel and nginx the
+    backend sees an internal host and, without this, would send people back to a hostname
+    that does not resolve for them.
+    """
+
+    session_lifetime: Duration = timedelta(days=7)
+    session_cookie_secure: bool = True
+    """Whether the session cookie is `Secure`.
+
+    On in production, where Cloudflare Tunnel terminates TLS and the origin is only ever
+    reached over HTTPS. The only reason to turn it off is a local stack served over plain
+    HTTP, and a browser silently dropping the cookie is a confusing way to discover that.
+    """
+
     # -- domain --------------------------------------------------------------
 
     management_guild_id: int = 0

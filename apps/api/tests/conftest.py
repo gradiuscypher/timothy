@@ -18,9 +18,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 
+from timothy_api import sessions
 from timothy_api.app import create_app
 from timothy_api.db import Database
 from timothy_api.enforcement import Enforcer, JobContext, SelfUnbans, Sweeper, Worker
+from timothy_api.oauth import DiscordIdentity, OAuthError
 from timothy_api.settings import Settings
 from timothy_core.migrations import sync_url
 from timothy_core.ports.discord import GuildPermissions
@@ -123,16 +125,102 @@ def settings(tmp_path: Path, settings_overrides: dict[str, Any]) -> Settings:
         "auto_subscribe_pool": "global",
         "workers_enabled": False,
         "dry_run": False,
+        # `TestClient` speaks http, and a cookie jar will not send a `Secure` cookie over
+        # it — the session would be set and then never presented again, and every test
+        # here about being signed in would fail as if the session had not been issued.
+        "session_cookie_secure": False,
         **settings_overrides,
     }
     return Settings(**fields)
 
 
+class FakeOAuth:
+    """Discord's consent screen, without Discord.
+
+    The real flow is three HTTPS calls to somebody else's service, none of which a test
+    can make and all of which a test needs to have happened. What matters below the seam
+    is what comes back — a user ID and a list of guilds — so that is what this is: a
+    dictionary from authorization code to identity, and a switch for each way the far
+    side can say no.
+    """
+
+    def __init__(self) -> None:
+        """A flow that is configured, works, and knows nobody yet."""
+        self.configured = True
+        self.identities: dict[str, DiscordIdentity] = {}
+        self.codes: list[str] = []
+        self.fails = False
+
+    def register(
+        self, code: str, *, user_id: int, guild_ids: tuple[int, ...], username: str = "mod"
+    ) -> DiscordIdentity:
+        """Arrange for `code` to identify this person."""
+        identity = DiscordIdentity(
+            user_id=user_id, username=username, avatar=None, guild_ids=guild_ids
+        )
+        self.identities[code] = identity
+        return identity
+
+    def authorize_url(self, *, state: str) -> str:
+        """Somewhere that is obviously not Discord, carrying the state back."""
+        return f"https://discord.invalid/authorize?state={state}"
+
+    async def identify(self, *, code: str) -> DiscordIdentity:
+        """Redeem a code that was registered, or refuse the way Discord would."""
+        self.codes.append(code)
+        if self.fails:
+            msg = "Discord answered 401 to /oauth2/token"
+            raise OAuthError(msg)
+        identity = self.identities.get(code)
+        if identity is None:
+            msg = f"unknown code: {code}"
+            raise OAuthError(msg)
+        return identity
+
+
 @pytest.fixture
-def client(settings: Settings, discord: FakeDiscord) -> Iterator[TestClient]:
+def oauth() -> FakeOAuth:
+    """The login flow, with nobody registered yet."""
+    return FakeOAuth()
+
+
+@pytest.fixture
+def client(settings: Settings, discord: FakeDiscord, oauth: FakeOAuth) -> Iterator[TestClient]:
     """The application, migrated and wired, for the duration of one test."""
-    with TestClient(create_app(settings, discord_port=discord)) as test_client:
-        yield test_client
+    with TestClient(create_app(settings, discord_port=discord, oauth_port=oauth)) as client:
+        yield client
+
+
+def sign_in(
+    client: TestClient,
+    oauth: FakeOAuth,
+    *,
+    user_id: int = GUILD_ADMIN,
+    guild_ids: tuple[int, ...] = (MANAGEMENT_GUILD, GUILD),
+    username: str = "mod",
+) -> None:
+    """Take a client all the way through the OAuth flow, leaving it holding a session.
+
+    Both legs for real: `/auth/login` to mint the state cookie, then `/auth/callback` to
+    redeem it. A test that inserted a `sessions` row directly would prove nothing about
+    the flow, and the state check is the part most easily broken by accident.
+
+    Redirects are not followed — the first one goes to Discord, which does not exist
+    here, and the second to the SPA, which is not served by this application.
+    """
+    started = client.get("/auth/login", follow_redirects=False)
+    assert started.status_code == 307
+    state = client.cookies[sessions.STATE_COOKIE_NAME]
+
+    oauth.register("code", user_id=user_id, guild_ids=guild_ids, username=username)
+    finished = client.get(f"/auth/callback?code=code&state={state}", follow_redirects=False)
+    assert finished.status_code == 303, finished.text
+    assert sessions.COOKIE_NAME in client.cookies
+
+
+def as_browser(method: str) -> dict[str, str]:
+    """Headers a browser would send. `Origin` is what the CSRF check reads."""
+    return {"Origin": "http://testserver"} if method.upper() not in {"GET", "HEAD"} else {}
 
 
 @pytest.fixture

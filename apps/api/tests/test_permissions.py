@@ -148,3 +148,46 @@ async def test_a_non_member_resolves_to_no_permissions(discord: FakeDiscord) -> 
         await discord.guild_permissions(guild_id=GUILD, user_id=OUTSIDER)
         == GuildPermissions.none()
     )
+
+
+@pytest.mark.anyio
+async def test_a_narrow_miss_does_not_answer_a_wider_question(discord: FakeDiscord) -> None:
+    """Browser callers are scanned against the guilds Discord named at login (ADR 0010),
+    so "no" from one of them is only "no" about those guilds. Keying the cache on the
+    user alone would let a browser's narrow miss refuse the bot's wide question."""
+    resolver = PermissionResolver(discord, ttl=TTL, clock=Clock())
+
+    assert not await resolver.is_member_of_any(guild_ids=[OTHER_GUILD], user_id=MEMBER)
+    assert await resolver.is_member_of_any(
+        guild_ids=[MANAGEMENT_GUILD, GUILD, OTHER_GUILD], user_id=MEMBER
+    )
+
+
+@pytest.mark.anyio
+async def test_the_order_of_a_scan_is_not_part_of_its_cache_key(discord: FakeDiscord) -> None:
+    """`X-Timothy-From-Guild` reorders the scan and nothing else, so the two orders have
+    to share one cache entry — otherwise the hint would double the Discord calls it was
+    added to avoid."""
+    resolver = PermissionResolver(discord, ttl=TTL, clock=Clock())
+
+    assert not await resolver.is_member_of_any(
+        guild_ids=[MANAGEMENT_GUILD, GUILD], user_id=OUTSIDER
+    )
+    assert not await resolver.is_member_of_any(
+        guild_ids=[GUILD, MANAGEMENT_GUILD], user_id=OUTSIDER
+    )
+
+    assert len(discord.calls_of("fetch_member")) == 2
+
+
+@pytest.mark.anyio
+async def test_the_scan_still_asks_in_the_order_it_was_given(discord: FakeDiscord) -> None:
+    """The set is the cache key; the list is the itinerary. Iterating the set instead
+    would quietly undo phase 5's fix for `/list_pools` timing out at 123 guilds."""
+    resolver = PermissionResolver(discord, ttl=TTL, clock=Clock())
+
+    assert await resolver.is_member_of_any(
+        guild_ids=[GUILD, MANAGEMENT_GUILD, OTHER_GUILD], user_id=MEMBER
+    )
+
+    assert [call.guild_id for call in discord.calls_of("fetch_member")] == [GUILD]

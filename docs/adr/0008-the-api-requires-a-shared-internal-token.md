@@ -17,10 +17,15 @@ so it fails the other way.
 
 ## Consequences
 
-- The bot container holds the token. So will phase 5's migration tool.
-- A browser reaching `/api` gets a 401 today, which is correct: phase 6's session cookie
-  is what will authenticate browsers, and until it exists there is nothing legitimate for
-  a browser to do there.
+- The bot container holds the token. So does phase 5's migration tool.
+- A browser reaching `/api` gets a 401 unless it holds a session cookie. Phase 6 added
+  that as the *second* credential rather than as an exception to this one: a browser
+  never sees the internal token, and a session names its own actor, so the pairing this
+  ADR is about — a credential plus an assertion the credential does not constrain —
+  simply does not arise there. Sending `X-Timothy-Actor` with a session is refused.
+  `/auth/login` and `/auth/callback` are outside both, because getting a credential is
+  what they are for; neither is worth anything without completing Discord's consent
+  screen.
 - The token is a single shared secret with no rotation story. That is proportionate while
   the only holders are containers in one compose network; it would not be if the API were
   ever reachable by anything else.

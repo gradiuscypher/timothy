@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from timothy_api import policy
 from timothy_api.db import Database
-from timothy_api.identity import CallerActor
+from timothy_api.identity import Caller, CallerDep
 from timothy_api.permissions import PermissionResolver
 from timothy_api.policy import Operation, PermissionContext, Requirement
 from timothy_api.settings import Settings
@@ -67,9 +67,26 @@ FROM_GUILD_HEADER: Final = "X-Timothy-From-Guild"
 """Where the caller's interaction came from. Ordering only — see :func:`_scan_order`."""
 
 
-async def _timothys_guild_ids(session: AsyncSession) -> list[int]:
+async def timothys_guild_ids(session: AsyncSession) -> list[int]:
+    """Every guild Timothy has a record of being in."""
     result = await session.scalars(select(Guild.guild_id))
     return list(result)
+
+
+def _scan_set(guild_ids: list[int], caller: Caller, request: Request) -> list[int]:
+    """Which of Timothy's guilds to ask about, in which order.
+
+    A browser caller brings a snapshot of the guilds Discord said it was in at login
+    (ADR 0010), so the scan is the intersection and nothing else: a person in none of
+    Timothy's guilds is refused after zero Discord calls instead of a hundred and
+    twenty-three. Anyone in the intersection is still confirmed against Discord, so the
+    snapshot narrows the question and never answers it.
+
+    A service caller has no snapshot, and falls back to the ordering hint below.
+    """
+    if caller.guild_ids is not None:
+        return [guild_id for guild_id in guild_ids if guild_id in caller.guild_ids]
+    return _scan_order(guild_ids, request)
 
 
 def _scan_order(guild_ids: list[int], request: Request) -> list[int]:
@@ -126,28 +143,29 @@ class Requires:
     async def __call__(
         self,
         request: Request,
-        actor: CallerActor,
+        caller: CallerDep,
         settings: SettingsDep,
         session: SessionDep,
         resolver: ResolverDep,
     ) -> Actor:
         """Resolve, decide, and hand the actor on to the handler."""
-        context = await self._resolve(request, actor, settings, session, resolver)
+        context = await self._resolve(request, caller, settings, session, resolver)
         if not policy.allows(self.operation, context):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"not permitted: {self.operation.value}",
             )
-        return actor
+        return caller.actor
 
     async def _resolve(
         self,
         request: Request,
-        actor: Actor,
+        caller: Caller,
         settings: Settings,
         session: AsyncSession,
         resolver: ResolverDep,
     ) -> PermissionContext:
+        actor = caller.actor
         user_id = actor.user_id
         needed = policy.requirement(self.operation)
         if user_id is None:
@@ -171,7 +189,7 @@ class Requires:
             return PermissionContext(
                 actor=actor,
                 any_guild_member=await resolver.is_member_of_any(
-                    guild_ids=_scan_order(await _timothys_guild_ids(session), request),
+                    guild_ids=_scan_set(await timothys_guild_ids(session), caller, request),
                     user_id=user_id,
                 ),
             )

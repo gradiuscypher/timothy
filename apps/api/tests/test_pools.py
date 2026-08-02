@@ -105,8 +105,8 @@ def test_a_pool_can_be_renamed_without_touching_what_references_it(pool: TestCli
 
     assert renamed.status_code == 200
     assert renamed.json()["id"] == created["pool_id"]
-    listings = pool.get("/pools/junk/listings", headers=headers(POOL_ADMIN)).json()
-    assert [entry["id"] for entry in listings] == [created["id"]]
+    page = pool.get("/pools/junk/listings", headers=headers(POOL_ADMIN)).json()
+    assert [entry["id"] for entry in page["listings"]] == [created["id"]]
 
 
 def test_a_rename_onto_an_existing_name_is_a_conflict(pool: TestClient) -> None:

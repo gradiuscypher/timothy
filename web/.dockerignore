@@ -1,0 +1,9 @@
+# The build context is web/ itself, so the repository root's .dockerignore does not
+# apply here. Without this, `node_modules` is uploaded to the daemon on every build.
+node_modules
+dist
+.vite
+# Regenerated from the backend by `npm run api`; the committed client is what builds.
+openapi.json
+scripts
+eslint.config.js

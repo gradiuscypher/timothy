@@ -49,10 +49,16 @@ special cases.
 | API | FastAPI, Pydantic v2 |
 | Persistence | SQLAlchemy 2.0 async + aiosqlite, Alembic migrations |
 | Discord | discord.py — gateway in the bot, REST-only (`login()` without connect) in the backend |
-| Frontend | Vite, React 19, TypeScript, TanStack Router + Query, Tailwind + shadcn/ui |
+| Frontend | Vite, React 19, TypeScript, TanStack Router + Query, Tailwind v4 |
 | API client | `openapi-typescript` + `openapi-fetch`, generated from FastAPI's schema |
-| Tests | pytest + anyio, real SQLite per test, in-memory fake Discord; Vitest + Playwright |
+| Tests | pytest + anyio, real SQLite per test, in-memory fake Discord; Vitest + msw |
 | Ingress | Cloudflare Tunnel (`cloudflared`), no published ports |
+
+shadcn/ui was in this table and is not installed. Phase 6 wrote the same primitives in its
+idiom — the same Tailwind vocabulary, the same `cn` helper — because what shadcn brings to
+screens like these is Radix behind the interactive components, and the interactions here
+are a `<select>`, a table and one confirm dialog. See `web/src/components/ui.tsx`; the
+classes are compatible, so `shadcn add` later drops in over the top rather than beside it.
 
 ## Configuration
 
@@ -63,6 +69,10 @@ special cases.
 | `ENFORCEMENT_BURST_LIMIT` | `25` | Bans in one guild in one run before the breaker trips. Runtime-adjustable, not a redeploy. |
 | `SWEEP_INTERVAL` | `7d` | Must be longer than a round takes, and a round is one member lookup per listed user per subscribed guild, issued serially. This was `1h` on the reasoning that "an hour of exposure is tolerable and a day is not" — right about the tolerance, wrong about the arithmetic. See below. |
 | `PERMISSION_CACHE_TTL` | `60s` | |
+| `DISCORD_CLIENT_ID` / `_SECRET` | — | The web UI's OAuth login. Unset closes login (503) rather than opening anything. |
+| `PUBLIC_BASE_URL` | — | Where a browser reaches Timothy. The redirect URI is `<this>/api/auth/callback` and Discord matches it exactly. |
+| `SESSION_LIFETIME` | `7d` | Also how long a session's guild snapshot stays current (ADR 0010). |
+| `SESSION_COOKIE_SECURE` | `true` | Off only for a local stack on plain HTTP. |
 | `WORKERS_ENABLED` | `true` | The worker and sweep scheduler run inside the backend. Off leaves the API serving and the queue accumulating. |
 | `JOB_POLL_INTERVAL` | `1s` | How long the worker waits on an empty queue — the floor on how immediate "immediate" is. |
 | `JOB_MAX_ATTEMPTS` | `5` | Attempts before a job is abandoned as `failed`, with the reason in `jobs.last_error`. Per-guild failures are recorded as enforcement outcomes and retried by the sweep instead. |
@@ -102,7 +112,8 @@ enforcement_outcomes  guild_id, user_id, pool_id, status, reason, attempted_at
                         — durable; makes a ban attributable and revertable,
                           and is the record that keeps warnings to one per user
 jobs                  id, kind, payload, run_after, attempts, status, last_error
-sessions              id PK, user_id, created_at, expires_at
+sessions              id PK (sha256 of the cookie), user_id, username, avatar,
+                        guild_ids, created_at, expires_at
 audit_log             id, actor, action, target, detail, at
 ```
 
@@ -122,7 +133,10 @@ pool, even across leaves and rejoins. If that guild later switches the subscript
 ## Authorization
 
 Callers assert identity only. The backend resolves permissions itself against Discord,
-short-TTL cached.
+short-TTL cached. There are two kinds of caller and they assert it differently: a service
+presents the internal token and names an actor in `X-Timothy-Actor`; a browser presents
+the session cookie, which *is* the actor and so cannot name a different one (ADR 0008,
+ADR 0010).
 
 | Operation | Requires |
 | --- | --- |

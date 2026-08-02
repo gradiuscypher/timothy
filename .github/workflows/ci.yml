@@ -40,6 +40,74 @@ jobs:
       - name: Test
         run: uv run pytest --cov --cov-report=term-missing
 
+  web:
+    name: the SPA lints, type checks, tests and builds
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npx eslint .
+
+      - name: Type check
+        run: npx tsc -b --noEmit
+
+      - name: Test
+        run: npx vitest run
+
+      - name: Build
+        run: npm run build
+
+  contract:
+    name: the generated API client matches the backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # `web/src/api/schema.d.ts` is generated from the backend's own OpenAPI document and
+      # committed, which is what makes it reviewable. Regenerating it here is the check
+      # that the committed copy still describes the API — the same thing
+      # `apps/bot/tests/test_contract.py` does for the bot, for the client that has no
+      # Python to assert it in.
+      - name: Regenerate the client from the application
+        run: |
+          uv sync --locked
+          cd web && npm ci && npm run api
+
+      # `git status` rather than `git diff`, so a schema that is missing from the commit
+      # entirely fails the same way as one that is stale.
+      - name: It is the one that is committed
+        run: |
+          if [ -n "$(git status --porcelain web/src/api/schema.d.ts)" ]; then
+            echo "::error::the API changed and web/src/api/schema.d.ts was not regenerated."
+            echo "Run 'npm run api' in web/ and commit the result."
+            git diff -- web/src/api/schema.d.ts | head -60
+            exit 1
+          fi
+
   stack:
     name: images build and the stack comes up
     runs-on: ubuntu-latest
@@ -78,6 +146,31 @@ jobs:
       - name: The SPA history fallback serves index.html
         run: |
           docker compose exec -T web wget -qO- http://127.0.0.1/pools/anything | grep -q '<title>Timothy</title>'
+
+      # The image serves a real build, not the placeholder page it served through phase 5.
+      # A `vite build` that silently produced nothing would still pass the two checks
+      # above, because they only look at index.html.
+      - name: The page it serves is the built bundle
+        run: |
+          bundle="$(docker compose exec -T web wget -qO- http://127.0.0.1/ \
+            | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1)"
+          test -n "$bundle"
+          docker compose exec -T web wget -qS -O /dev/null "http://127.0.0.1$bundle" 2>&1 \
+            | grep -q '200 OK'
+          docker compose exec -T web wget -qS -O /dev/null "http://127.0.0.1$bundle" 2>&1 \
+            | grep -q 'immutable'
+
+      # A browser with no session must be told to log in rather than let in, and the
+      # login itself must fail closed when the application is not configured for it.
+      - name: A browser is not signed in, and login is closed until it is configured
+        run: |
+          docker compose exec -T web sh -c '
+            wget -qS -O /dev/null http://127.0.0.1/api/auth/me 2>&1 | grep -q "401 Unauthorized"
+          '
+          docker compose exec -T web sh -c '
+            wget -qS -O /dev/null http://127.0.0.1/api/auth/login 2>&1 \
+              | grep -q "503 Service Unavailable"
+          '
 
       # nginx proxies /api from what will be a public tunnel, so this is the check that
       # the internal token is really in front of the API and not merely configured.

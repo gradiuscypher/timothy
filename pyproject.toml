@@ -61,6 +61,11 @@ ignore = [
 "**/migrations/versions/**" = [
     "INP001",  # alembic loads revisions by path, not as a package
 ]
+"web/scripts/*.py" = [
+    # A one-file script the frontend's `npm run api` shells out to, not an importable
+    # module. It lives beside the thing it generates rather than in the Python tree.
+    "INP001",
+]
 "apps/api/src/timothy_api/**" = [
     # `HTTPException(detail=...)` is the message the API's caller reads — the API's
     # contract, not an exception whose text belongs in its class.
@@ -76,8 +81,10 @@ ignore = [
 ]
 "apps/api/src/timothy_api/routers/**" = [
     # A FastAPI handler declares its dependencies as parameters, so the argument count
-    # measures how much is injected rather than how much the reader has to hold.
+    # measures how much is injected rather than how much the reader has to hold. Nothing
+    # calls a handler positionally either — FastAPI fills every one of them by name.
     "PLR0913",
+    "PLR0917",
 ]
 "**/tests/**" = [
     # A pytest fixture is requested by name, so one that exists only for its side effect

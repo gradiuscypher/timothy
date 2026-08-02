@@ -1,0 +1,334 @@
+import { cloneElement, useId } from "react";
+
+import { cn } from "./cn";
+import type {
+  ButtonHTMLAttributes,
+  InputHTMLAttributes,
+  ReactElement,
+  ReactNode,
+  SelectHTMLAttributes,
+  TextareaHTMLAttributes,
+} from "react";
+
+/**
+ * The small set of primitives every screen is built from.
+ *
+ * PLAN.md names shadcn/ui, and this is written in its idiom — the same Tailwind class
+ * vocabulary, the same `cn` helper, the same prop shapes — without its dependencies.
+ * What shadcn actually brings to a set of screens like these is Radix behind the
+ * interactive components, and the interactions here are a native `<dialog>`, a native
+ * `<select>` and a table. Ten more packages to reach the same behaviour is not a trade
+ * worth making at this size, and the classes are compatible, so `shadcn add` later drops
+ * in over the top rather than beside it.
+ */
+
+// -- buttons ---------------------------------------------------------------------------
+
+type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: "primary" | "secondary" | "ghost" | "danger";
+  size?: "sm" | "md";
+};
+
+const BUTTON_VARIANTS = {
+  primary: "bg-accent text-accent-ink hover:opacity-90",
+  secondary: "bg-surface-2 text-surface-ink hover:bg-surface-border",
+  ghost: "text-surface-muted hover:bg-surface-2 hover:text-surface-ink",
+  danger: "bg-danger text-accent-ink hover:opacity-90",
+} as const;
+
+export function Button({
+  variant = "secondary",
+  size = "md",
+  className,
+  ...props
+}: ButtonProps) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "inline-flex items-center justify-center gap-1.5 rounded-md font-medium",
+        "transition-opacity disabled:pointer-events-none disabled:opacity-50",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        size === "sm" ? "h-8 px-2.5 text-sm" : "h-9 px-3.5 text-sm",
+        BUTTON_VARIANTS[variant],
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+// -- form controls ---------------------------------------------------------------------
+
+const FIELD =
+  "w-full rounded-md border border-surface-border bg-surface-0 px-3 py-1.5 text-sm " +
+  "placeholder:text-surface-muted focus-visible:outline-2 focus-visible:outline-accent";
+
+export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  return <input className={cn(FIELD, "h-9", className)} {...props} />;
+}
+
+export function Textarea({
+  className,
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return <textarea className={cn(FIELD, "font-mono text-[0.8125rem]", className)} {...props} />;
+}
+
+export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return <select className={cn(FIELD, "h-9", className)} {...props} />;
+}
+
+/**
+ * A labelled control, with the hint described rather than named.
+ *
+ * The hint has to be *outside* the accessible name. Nesting it made the name of the bulk
+ * textarea "User IDs Anything with IDs in it… 0 found", which changes every keystroke —
+ * unusable to announce, and unfindable by name in a test.
+ */
+export function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactElement<{ id?: string; "aria-describedby"?: string }>;
+}) {
+  const id = useId();
+  const hintId = hint ? `${id}-hint` : undefined;
+  return (
+    <div className="space-y-1">
+      <label htmlFor={id} className="block text-sm font-medium">
+        {label}
+      </label>
+      {cloneElement(children, { id, "aria-describedby": hintId })}
+      {hint ? (
+        <span id={hintId} className="block text-xs text-surface-muted">
+          {hint}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+// -- containers ------------------------------------------------------------------------
+
+export function Card({
+  className,
+  label,
+  children,
+}: {
+  className?: string;
+  /** Names the section for assistive technology — a `<section>` with a name is a
+   *  landmark, and these screens stack several that look alike. */
+  label?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      aria-label={label}
+      className={cn(
+        "rounded-lg border border-surface-border bg-surface-1 p-4 sm:p-5",
+        className,
+      )}
+    >
+      {children}
+    </section>
+  );
+}
+
+export function CardTitle({ children, action }: { children: ReactNode; action?: ReactNode }) {
+  return (
+    <header className="mb-3 flex items-center justify-between gap-3">
+      <h2 className="text-base font-semibold">{children}</h2>
+      {action}
+    </header>
+  );
+}
+
+export function PageTitle({ children, action }: { children: ReactNode; action?: ReactNode }) {
+  return (
+    <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <h1 className="text-xl font-semibold tracking-tight">{children}</h1>
+      {action}
+    </header>
+  );
+}
+
+// -- feedback --------------------------------------------------------------------------
+
+const TONES = {
+  neutral: "bg-surface-2 text-surface-ink",
+  ban: "bg-danger/15 text-danger",
+  warn: "bg-warn/15 text-warn",
+  ok: "bg-ok/15 text-ok",
+} as const;
+
+export function Badge({
+  tone = "neutral",
+  children,
+}: {
+  tone?: keyof typeof TONES;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium",
+        TONES[tone],
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/**
+ * Whatever went wrong, in the backend's own words.
+ *
+ * `role="alert"` because these appear after an action rather than on load — a moderator
+ * who just pressed a button and heard nothing needs the refusal announced, not merely
+ * rendered.
+ */
+export function ErrorNote({ error }: { error: unknown }) {
+  if (!error) return null;
+  // Anything that is not an `Error` gets a general message rather than
+  // "[object Object]" — the point of this box is that somebody can read it.
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "Something went wrong.";
+  return (
+    <p role="alert" className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">
+      {message}
+    </p>
+  );
+}
+
+export function Empty({ children }: { children: ReactNode }) {
+  return <p className="py-6 text-center text-sm text-surface-muted">{children}</p>;
+}
+
+export function Loading({ what }: { what: string }) {
+  return (
+    <p className="py-6 text-center text-sm text-surface-muted" aria-live="polite">
+      Loading {what}…
+    </p>
+  );
+}
+
+// -- tables ----------------------------------------------------------------------------
+
+export function Table({ head, children }: { head: ReactNode[]; children: ReactNode }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-surface-border text-left">
+            {head.map((cell, index) => (
+              <th
+                // The header cells are a fixed literal list per table, so the index is
+                // stable by construction.
+                key={index}
+                className="px-2 py-2 text-xs font-semibold tracking-wide text-surface-muted uppercase"
+              >
+                {cell}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
+  );
+}
+
+export function Row({ children }: { children: ReactNode }) {
+  return <tr className="border-b border-surface-border/60 last:border-0">{children}</tr>;
+}
+
+export function Cell({ className, children }: { className?: string; children: ReactNode }) {
+  return <td className={cn("px-2 py-2 align-top", className)}>{children}</td>;
+}
+
+// -- confirmation ----------------------------------------------------------------------
+
+/**
+ * A blocking confirm for the things that reach Discord.
+ *
+ * Deleting a pool, unsubscribing with `revert`, bulk-removing listings — each of these
+ * bans or unbans real people in guilds this screen is not showing. The dialog exists to
+ * put the consequence in words before the button works, which is the same reason
+ * `?revert=true` has no slash command.
+ */
+export function Confirm({
+  open,
+  title,
+  body,
+  confirmLabel = "Confirm",
+  destructive = true,
+  busy = false,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  body: ReactNode;
+  confirmLabel?: string;
+  destructive?: boolean;
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="w-full max-w-md rounded-lg border border-surface-border bg-surface-1 p-5 shadow-xl"
+      >
+        <h2 className="text-base font-semibold">{title}</h2>
+        <div className="mt-2 space-y-2 text-sm text-surface-muted">{body}</div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            variant={destructive ? "danger" : "primary"}
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            {busy ? "Working…" : confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// -- formatting ------------------------------------------------------------------------
+
+export function When({ iso }: { iso: string }) {
+  const at = new Date(iso);
+  return (
+    <time dateTime={iso} title={at.toISOString()} className="text-surface-muted">
+      {at.toLocaleString()}
+    </time>
+  );
+}
+
+/** A Discord ID. Always monospaced, never wrapped, always selectable in one go. */
+export function Snowflake({ id }: { id: string }) {
+  return <span className="snowflake">{id}</span>;
+}
+
+/** `user:123…` or `system`, rendered so Timothy's own actions are visibly not a person. */
+export function ActorRef({ actor }: { actor: string }) {
+  if (actor === "system") return <Badge>Timothy</Badge>;
+  return <Snowflake id={actor.replace("user:", "")} />;
+}

@@ -74,7 +74,7 @@ class PermissionResolver:
         """Resolve through `discord`, remembering each answer for `ttl`."""
         self._discord = discord
         self._administrator: TtlCache[tuple[int, int], bool] = TtlCache(ttl, clock)
-        self._membership: TtlCache[int, bool] = TtlCache(ttl, clock)
+        self._membership: TtlCache[tuple[int, frozenset[int]], bool] = TtlCache(ttl, clock)
 
     async def is_administrator(self, *, guild_id: int, user_id: int) -> bool:
         """Whether the user holds `ADMINISTRATOR` in this guild.
@@ -94,23 +94,31 @@ class PermissionResolver:
         return self._administrator.put((guild_id, user_id), value=permissions.administrator)
 
     async def is_member_of_any(self, *, guild_ids: Iterable[int], user_id: int) -> bool:
-        """Whether the user is in any guild Timothy is in.
+        """Whether the user is in any of these guilds.
 
-        Cached against the user rather than the pair, because the expensive answer is
-        the negative one: a member is found and the scan stops, while a non-member costs
-        a call per guild. Caching the aggregate bounds that to once per TTL. The cost of
-        that is a guild Timothy has only just joined, which can take up to the TTL to
-        count. Phase 6 can shortcut this for browser callers, whose OAuth `guilds` scope
-        already names the guilds they are in.
+        Cached against the aggregate rather than per guild, because the expensive answer
+        is the negative one: a member is found and the scan stops, while a non-member
+        costs a call per guild. Caching the aggregate bounds that to once per TTL. The
+        cost of that is a guild Timothy has only just joined, which can take up to the
+        TTL to count.
+
+        The key includes *which* guilds were asked about, as a set, and that is not
+        incidental. Browser callers are scanned against the intersection of Timothy's
+        guilds with their own (ADR 0010), so "no" from one caller is only "no" about the
+        guilds that caller was scanned over — keying on the user alone would let a
+        browser's narrow miss answer the bot's wide question. Ordering is not part of the
+        key, so `X-Timothy-From-Guild` still shares one entry across every hint.
         """
-        cached = self._membership.get(user_id)
+        order = list(guild_ids)
+        scanned = frozenset(order)
+        cached = self._membership.get((user_id, scanned))
         if cached is not None:
             return cached
-        for guild_id in guild_ids:
+        for guild_id in order:
             try:
                 member = await self._discord.fetch_member(guild_id=guild_id, user_id=user_id)
             except NotFoundError:
                 continue  # Timothy is not in that guild after all.
             if member is not None:
-                return self._membership.put(user_id, value=True)
-        return self._membership.put(user_id, value=False)
+                return self._membership.put((user_id, scanned), value=True)
+        return self._membership.put((user_id, scanned), value=False)

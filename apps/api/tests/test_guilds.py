@@ -9,7 +9,17 @@ from timothy_api.jobs import JobKind
 from timothy_api.settings import Settings
 from timothy_core.ports.fake import FakeDiscord
 
-from .conftest import GUILD, GUILD_ADMIN, MEMBER, POOL_ADMIN, headers
+from .conftest import (
+    GUILD,
+    GUILD_ADMIN,
+    MANAGEMENT_GUILD,
+    MEMBER,
+    OUTSIDER,
+    POOL_ADMIN,
+    FakeOAuth,
+    headers,
+    sign_in,
+)
 
 Enqueued = Callable[[], list[tuple[str, dict[str, int]]]]
 
@@ -196,3 +206,52 @@ def test_leaving_a_guild_forgets_its_configuration(registered: TestClient) -> No
 
 def test_deregistering_a_guild_that_is_not_there_is_a_404(client: TestClient) -> None:
     assert client.delete(f"/guilds/{GUILD}", headers=headers("system")).status_code == 404
+
+
+# -- the web UI's front door -----------------------------------------------------------
+
+
+def test_listing_guilds_returns_only_the_ones_the_caller_administers(
+    registered: TestClient,
+) -> None:
+    """Filtering rather than gating. There is no operation "administrator somewhere", so
+    the list is built by asking Discord about each candidate."""
+    listed = registered.get("/guilds", headers=headers(GUILD_ADMIN)).json()
+
+    assert [entry["guild_id"] for entry in listed] == [str(GUILD)]
+
+
+def test_a_pool_admin_sees_their_own_guild_and_not_everybody_elses(
+    registered: TestClient,
+) -> None:
+    """Owning pools is authority over pools, not over the guilds that subscribe to them.
+    Their configuration stays their own business."""
+    listed = registered.get("/guilds", headers=headers(POOL_ADMIN)).json()
+
+    assert [entry["guild_id"] for entry in listed] == [str(MANAGEMENT_GUILD)]
+
+
+def test_a_member_who_administers_nothing_gets_an_empty_list(
+    registered: TestClient,
+) -> None:
+    assert registered.get("/guilds", headers=headers(MEMBER)).json() == []
+
+
+def test_listing_guilds_is_refused_to_someone_outside_every_guild(
+    registered: TestClient,
+) -> None:
+    assert registered.get("/guilds", headers=headers(OUTSIDER)).status_code == 403
+
+
+def test_a_browser_is_only_asked_about_the_guilds_discord_named(
+    registered: TestClient, oauth: FakeOAuth, discord: FakeDiscord
+) -> None:
+    """The candidates are the login snapshot intersected with Timothy's guilds. Without
+    that, a person in one server would cost a resolved permission for all 123."""
+    sign_in(registered, oauth, user_id=GUILD_ADMIN, guild_ids=(GUILD,))
+    discord.calls.clear()
+
+    listed = registered.get("/guilds").json()
+
+    assert [entry["guild_id"] for entry in listed] == [str(GUILD)]
+    assert [call.guild_id for call in discord.calls_of("guild_permissions")] == [GUILD]

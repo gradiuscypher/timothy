@@ -16,6 +16,22 @@ uv run ty check      # type check
 uv run pytest        # test
 ```
 
+The web UI is a separate toolchain in `web/`. Node 24.
+
+```sh
+cd web
+npm install
+npm run api          # regenerate the API client from the backend's OpenAPI document
+npx eslint .         # lint
+npx tsc -b --noEmit  # type check
+npx vitest run       # test
+npm run dev          # serve the SPA, proxying /api to http://localhost:8000
+```
+
+`src/api/schema.d.ts` is generated and **committed**, so the contract is a reviewable file
+rather than a build-time fetch. CI regenerates it and fails if the committed copy has
+drifted — run `npm run api` and commit the result whenever the API changes.
+
 ## Running
 
 ```sh
@@ -25,6 +41,21 @@ docker compose up --build
 
 No service publishes a port. The Cloudflare Tunnel is the only ingress and its single
 origin is `http://web:80`, which serves the SPA and proxies `/api` to the backend.
+
+### The web UI's login
+
+`TIMOTHY_DISCORD_CLIENT_ID`, `TIMOTHY_DISCORD_CLIENT_SECRET` and
+`TIMOTHY_PUBLIC_BASE_URL` turn on browser login. Leaving them unset closes it — the stack
+comes up and `/api/auth/login` answers 503 naming what is missing.
+
+On the Discord application, under OAuth2, register the redirect URI **exactly** as
+`<TIMOTHY_PUBLIC_BASE_URL>/api/auth/callback`. Discord compares the string, and a trailing
+slash is a failed login with no useful message. The backend requests `identify guilds`;
+nothing else.
+
+Timothy stores no Discord user tokens. The access token is used once, at login, to ask who
+you are and which servers you are in, and then discarded — what you may *do* is resolved
+with the bot token on every request (ADR 0001, ADR 0010).
 
 ## Migrating from the old bot
 
@@ -60,19 +91,28 @@ Two settings matter when running a second instance against the same Discord appl
 
 The application needs the **Server Members** privileged intent. Without it Discord never
 sends `GUILD_MEMBER_ADD`, so a listed user who joins is not banned at the door — nothing
-else looks wrong, and the hourly sweep still catches them.
+else looks wrong, and the weekly sweep still catches them.
 
 ## Calling the API
 
-Everything but `/health` and `/openapi.json` needs two headers. The bearer token
-authenticates the caller; `X-Timothy-Actor` names the Discord user it is speaking for,
-and carries no authority of its own — what that user may do is resolved against Discord.
+There are two kinds of caller, and neither of them asserts authority.
+
+A **service** — the bot, the migration tool, you with `curl` — presents the internal token
+as a bearer credential and names the Discord user it is speaking for in `X-Timothy-Actor`.
+The header carries no authority of its own; what that user may do is resolved against
+Discord.
 
 ```sh
 curl -H "Authorization: Bearer $TIMOTHY_INTERNAL_TOKEN" \
      -H "X-Timothy-Actor: user:242024455190577152" \
      http://localhost/api/pools
 ```
+
+A **browser** presents the session cookie `/api/auth/login` issues, which names the actor
+itself — so there is nothing to assert and nothing to forge. Sending `X-Timothy-Actor`
+alongside a session is refused rather than ignored.
+
+Everything but `/health`, `/openapi.json` and `/auth/*` needs one of the two.
 
 Guild, user and channel IDs are **strings** in requests and responses. They are 64-bit,
 and JavaScript numbers are not.

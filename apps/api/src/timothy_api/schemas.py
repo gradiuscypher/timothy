@@ -131,6 +131,57 @@ class ListingCreate(BaseModel):
     reason: str = Field(min_length=1)
 
 
+class ListingPage(BaseModel):
+    """One page of listings, and how to ask for the next.
+
+    Keyset pagination, like the audit log: `after_id` is the last id on this page, and
+    the table's ids only ever grow. An offset would shift under a reader every time
+    somebody added a listing, which on a pool with thousands of them is every few
+    seconds during a bulk import.
+    """
+
+    listings: list[ListingRead]
+    next_after_id: int | None
+    """Pass back as `after_id` for the following page. `None` on the last page."""
+
+    total: int
+    """How many listings match, ignoring the page. What the UI puts above the table."""
+
+
+class BulkListingCreate(BaseModel):
+    """Add many users to one pool in a single call.
+
+    Bounded, and not generously: a bulk listing is the operation that most deserves to be
+    reviewed before it is sent, and every entry becomes enforcement across every
+    subscribing guild. ADR 0007's circuit breaker will stop the fan-out long before this
+    limit matters, which is the intended trade — see `ENFORCEMENT_BURST_LIMIT`.
+    """
+
+    reason: str = Field(min_length=1)
+    """One reason for the whole batch. Bulk listing is "these accounts, this raid"."""
+
+    user_ids: list[Snowflake] = Field(min_length=1, max_length=500)
+
+
+class BulkListingDelete(BaseModel):
+    """Remove many listings from one pool in a single call."""
+
+    user_ids: list[Snowflake] = Field(min_length=1, max_length=500)
+
+
+class BulkResult(BaseModel):
+    """What a bulk operation did, per user.
+
+    Partial success is reported rather than rolled back. A caller who asked for five
+    hundred listings and gave three that were already there wants the four hundred and
+    ninety-seven, and wants to be told about the three.
+    """
+
+    applied: list[Snowflake]
+    skipped: list[Snowflake]
+    """Already listed, for a create; not listed, for a delete. Not an error either way."""
+
+
 class GuildRead(BaseModel):
     """A guild Timothy is in."""
 
@@ -291,6 +342,23 @@ class EventAck(BaseModel):
     """
 
     action: str
+
+
+class SignedInRead(BaseModel):
+    """Who the caller is, as `/auth/me` reports it.
+
+    Everything but `actor` and `manages_pools` is `None` for a service caller, which has
+    an actor but no session and so no name, face or expiry.
+    """
+
+    actor: ActorRef
+    user_id: Snowflake | None
+    username: str | None
+    avatar: str | None
+    expires_at: datetime | None
+    manages_pools: bool
+    """Whether this person administers the management guild, and so owns pools and
+    listings. A hint for drawing the navigation — every route resolves it again."""
 
 
 class AuditLogRead(BaseModel):

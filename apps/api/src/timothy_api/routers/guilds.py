@@ -9,10 +9,18 @@ resuming enforcement is the guild's own business, and needs an administrator the
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from timothy_api import audit, jobs
-from timothy_api.deps import Requires, SessionDep, SettingsDep
+from timothy_api.deps import (
+    Requires,
+    ResolverDep,
+    SessionDep,
+    SettingsDep,
+    timothys_guild_ids,
+)
+from timothy_api.identity import CallerDep
 from timothy_api.lookups import find_pool, get_guild
 from timothy_api.policy import Operation
 from timothy_api.schemas import GuildRead, GuildUpdate, Snowflake
@@ -25,6 +33,7 @@ router = APIRouter(prefix="/guilds", tags=["guilds"])
 Registrar = Annotated[Actor, Depends(Requires(Operation.REGISTER_GUILD))]
 GuildReader = Annotated[Actor, Depends(Requires(Operation.READ_GUILD))]
 GuildManager = Annotated[Actor, Depends(Requires(Operation.MANAGE_GUILD_ENFORCEMENT))]
+GuildLister = Annotated[Actor, Depends(Requires(Operation.LIST_GUILDS))]
 
 GuildId = Annotated[Snowflake, Path(description="A Discord guild ID.")]
 
@@ -64,6 +73,47 @@ async def _auto_subscribe(session: AsyncSession, guild: Guild, pool_name: str) -
         target=audit.guild_pool_target(guild_id=guild.guild_id, pool_name=pool.name),
         detail={"pool_id": pool.id, "level": SubscriptionLevel.BAN.value, "reason": "joined"},
     )
+
+
+@router.get("")
+async def list_my_guilds(
+    _actor: GuildLister,
+    caller: CallerDep,
+    session: SessionDep,
+    resolver: ResolverDep,
+) -> list[GuildRead]:
+    """Every guild Timothy is in that this caller administers.
+
+    The web UI's front door: a person signs in and has to be shown which of their servers
+    they can configure, without being shown anybody else's. Filtering rather than gating
+    is the whole design — there is no operation "administrator somewhere", so the list is
+    built by asking Discord about each candidate.
+
+    What that costs depends on who is asking. A browser brings the guilds Discord said it
+    was in at login (ADR 0010), so the candidates are that intersected with Timothy's —
+    a handful, not the hundred-odd Timothy is in. A service caller has no snapshot and
+    pays a resolved permission per guild, which is why the bot has no command for this.
+    """
+    user_id = caller.actor.user_id
+    if user_id is None:  # pragma: no cover — `system` cannot hold ANY_GUILD_MEMBER
+        return []
+
+    known = await timothys_guild_ids(session)
+    candidates = (
+        [guild_id for guild_id in known if guild_id in caller.guild_ids]
+        if caller.guild_ids is not None
+        else known
+    )
+
+    administered = [
+        guild_id
+        for guild_id in candidates
+        if await resolver.is_administrator(guild_id=guild_id, user_id=user_id)
+    ]
+    guilds = await session.scalars(
+        select(Guild).where(Guild.guild_id.in_(administered)).order_by(Guild.guild_id)
+    )
+    return [GuildRead.of(guild) for guild in guilds]
 
 
 @router.put("/{guild_id}")

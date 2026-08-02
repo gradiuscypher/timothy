@@ -38,6 +38,7 @@ class Operation(StrEnum):
     MANAGE_NOTIFICATION_CHANNEL = "manage_notification_channel"
     MANAGE_GUILD_ENFORCEMENT = "manage_guild_enforcement"
     READ_GUILD = "read_guild"
+    LIST_GUILDS = "list_guilds"
     READ_AUDIT_LOG = "read_audit_log"
     READ_ENFORCEMENT = "read_enforcement"
     REGISTER_GUILD = "register_guild"
@@ -73,6 +74,11 @@ REQUIREMENTS: Final[Mapping[Operation, Requirement]] = {
     Operation.MANAGE_NOTIFICATION_CHANNEL: Requirement.TARGET_GUILD_ADMIN,
     Operation.MANAGE_GUILD_ENFORCEMENT: Requirement.TARGET_GUILD_ADMIN,
     Operation.READ_GUILD: Requirement.TARGET_GUILD_ADMIN,
+    # The gate is only that the caller is somewhere Timothy is; the *answer* is filtered
+    # to the guilds they administer, one resolved permission at a time. A rule saying
+    # "administrator somewhere" would need resolving before it could be checked, which is
+    # the same work as producing the list.
+    Operation.LIST_GUILDS: Requirement.ANY_GUILD_MEMBER,
     Operation.READ_ENFORCEMENT: Requirement.TARGET_GUILD_ADMIN,
     Operation.REGISTER_GUILD: Requirement.SYSTEM,
     # A gateway event is something that happened, not something anyone asked for. There
