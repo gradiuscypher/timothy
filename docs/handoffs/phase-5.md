@@ -134,14 +134,24 @@ against that guild then exercised the workers end to end and the diff came back 
 Four things came out of it that reading the code had not:
 
 **`fetch_member` runs at about two per second per guild.** Measured, not estimated: 40
-lookups in 15.7s in a burst, and 2,995 in 28 minutes sustained. The first sweep after
-cutover is ~347,000 lookups — **about 48 hours** — because `enforcement_outcomes` starts
-empty and every listed user is a candidate. From the second round it is nearly free.
+lookups in 15.7s in a burst, and 2,995 in 28 minutes sustained. A full round of the
+production data is ~347,000 lookups — **about 48 hours**.
 
-That is a long tail rather than an outage: new joins are covered immediately by the
-gateway path, and the backlog is mostly discovering that the old bot already banned
-everyone it was going to. `docs/cutover.md` now says so and sizes it. The real fix, if two
-days ever becomes intolerable, is below.
+And it is *every* round, not a cold start. Only `banned`, `warned` and `skipped_exception`
+settle a candidate; a listed user who is merely absent records nothing, deliberately —
+settling them would have the sweep skip them forever if the gateway later missed their
+join, which is the exact gap the sweep exists to cover. Almost every candidate is absent,
+so the set barely shrinks: the rehearsal's guild went 2,995 → 2,992 after a completed
+round, verified by running `sweep_candidates` against the result.
+
+So `TIMOTHY_SWEEP_INTERVAL` schedules rounds but does not set the period — the outstanding-
+job guard means the real period is however long a round takes. **The safety net is a
+two-day net at this scale, not an hourly one**, and the backend makes Discord calls
+continuously and forever, almost all of them answering "not here".
+
+The primary path is untouched: a join is enforced immediately by the gateway event, which
+never consults the candidate set. So this is a weakened backstop rather than an outage —
+but it makes the change below considerably more than an optimisation.
 
 **The warn burst is standing exposure, not a burst.** 2,935 users would be warned about in
 that guild *if present*; one actually was. The rest stay armed and trickle out as people
@@ -188,6 +198,9 @@ dry run is not on its own evidence that dry run is off; the *statuses* are what 
 
 ## The one open decision: bulk member listing
 
+Upgraded, on the evidence above, from an optimisation to the thing that makes
+`TIMOTHY_SWEEP_INTERVAL` mean what it says.
+
 The sweep asks Discord "is this user in this guild?" once per candidate. Discord also
 offers `GET /guilds/{id}/members?limit=1000`, which pages the whole membership — one
 request per thousand members, regardless of how many users are listed.
@@ -229,7 +242,8 @@ Worth doing before the deployment grows. Not worth doing between now and cutover
 - **GitHub Actions layer caching**, still deferred. Comment marks the spot in `ci.yml`.
 - **The token is a single shared secret with no rotation story** (ADR 0008), and the
   production one was pasted into a session transcript during the rehearsal. **Rotate it.**
-- **Bulk member listing**, above — the standing answer to the 48-hour cold start.
+- **Bulk member listing**, above — the standing answer to a sweep whose real period is
+  two days rather than the configured hour.
 - **`is_member_of_any` still costs a full scan for a genuine non-member** — the hint
   above only helps someone who *is* in the guild they are calling from, which is everyone
   arriving through the bot. A caller in none of Timothy's guilds still pays 123 calls

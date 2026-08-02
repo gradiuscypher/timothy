@@ -260,26 +260,34 @@ In this order:
    drifted. A tripped breaker pauses that guild and asks for a human, which is what it is
    for: resume it deliberately, do not raise the limit to get past it.
 
-### The first round takes about two days, and that is survivable
+### Every round takes about two days, and the interval does not change that
 
-`enforcement_outcomes` starts empty, so every listed user in every subscribed pool is a
-candidate and the first round pays the full ~347,000 lookups — roughly 48 hours. From the
-second round on it is nearly free, because settled outcomes drop out of the candidate set.
+`fetch_member` runs at about two calls a second per guild. A full round of the production
+data is ~347,000 of them — roughly **48 hours**, sequential.
 
-That is a long tail, not an outage, and it is worth being clear why:
+That is not a cold start that pays off once. **It is every round.** A sweep candidate stops
+being one when its outcome settles, and the only settling statuses are `banned`, `warned`
+and `skipped_exception`. A listed user who is simply *not in the guild* records nothing, on
+purpose: recording `user_absent` would settle them, and if the gateway then missed their
+join, the sweep — the thing that exists to catch missed joins — would skip them forever.
 
-- **New joins are covered from minute one.** The gateway path is reactive and immediate
-  (ADR 0004); it does not wait for a sweep.
-- **The backlog is mostly discovering that nothing needs doing.** Everyone the old bot was
-  going to ban, it already banned — so they are absent, and the sweep skips them. What the
-  first round is really hunting is the handful the old bot *failed* to ban.
-- **Those have been present for months already.** Another day and a half is not the risk it
-  sounds like.
+Almost every candidate is absent. In the phase 5 rehearsal one guild went from 2,995
+candidates to 2,992 after a completed round. So the practical shape is:
 
-Do not raise `TIMOTHY_SWEEP_INTERVAL` down to hurry it along; rounds would overlap and the
-guard would simply skip guilds still working. If two days is genuinely too slow, the fix is
-a bulk member listing rather than a lookup per user — see the phase 5 handoff, which sizes
-it. That is a code change, not a cutover setting.
+- `TIMOTHY_SWEEP_INTERVAL` schedules rounds, but a guild with a sweep outstanding is
+  skipped, so the real period is however long a round takes — about two days here.
+- The backend makes Discord calls continuously, forever, and almost every one answers
+  "not here".
+- **The safety net has a two-day period, not an hourly one.** Set your expectations of it
+  accordingly.
+
+None of that touches the primary path: a listed user who joins is banned at the door by
+the gateway event, immediately, and that path never consults the candidate set.
+
+So it is survivable — the sweep is a backstop for gateway outages (ADR 0004), not how bans
+normally happen — but do not read `TIMOTHY_SWEEP_INTERVAL=3600` and believe it. The fix is
+bulk member listing, which turns a round from two days into minutes; the phase 5 handoff
+sizes it.
 
 ### If it goes wrong
 
