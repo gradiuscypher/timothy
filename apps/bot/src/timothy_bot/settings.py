@@ -1,6 +1,6 @@
 """Process configuration, read from the environment."""
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,4 +16,34 @@ class Settings(BaseSettings):
     internal_token: SecretStr = SecretStr("")
     """What the bot presents to the backend on every call. The bot asserts identity —
     whose interaction this is — and never authority; the backend resolves that itself
-    (ADR 0003). Phase 4 is what starts sending it."""
+    (ADR 0003)."""
+
+    management_guild_id: int = 0
+    """Where the pool and listing commands are registered.
+
+    The same value the backend reads, and it has to be: registering `/add_ban` in a guild
+    whose administrators the backend will refuse produces a command that is visible and
+    always fails. Unset registers them nowhere, which is the safe direction — nobody is
+    an administrator of guild 0."""
+
+    gateway_enabled: bool = True
+    """Connect to Discord at all.
+
+    Off leaves the process up and the backend reachable but never opens the gateway —
+    what CI runs, where the token is a placeholder and there is no application to log in
+    to. The backend's `WORKERS_ENABLED` is the same idea from the other side."""
+
+    sync_commands: bool = True
+    """Upload the command tree to Discord on startup.
+
+    On, because command registration lives in the bot now and a deployment that changed a
+    command should ship it. Off for a second instance run against the same application,
+    which would otherwise overwrite the live surface with whatever it happens to have."""
+
+    request_timeout: float = Field(default=2.5, gt=0)
+    """Seconds to wait for the backend.
+
+    Inside Discord's three-second interaction deadline on purpose. Everything a command
+    does is answered well within it — a mutation enqueues its fan-out rather than
+    performing it — so a request still outstanding at this point is a backend in trouble,
+    and a moderator is better served by an error than by an interaction that expires."""

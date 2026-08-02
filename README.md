@@ -26,6 +26,26 @@ docker compose up --build
 No service publishes a port. The Cloudflare Tunnel is the only ingress and its single
 origin is `http://web:80`, which serves the SPA and proxies `/api` to the backend.
 
+## Slash commands
+
+The bot registers them itself, on startup, from `apps/bot/src/timothy_bot/commands/` —
+there is no separate upload step. Two sets: the guild-configuration commands are global,
+and the pool and listing commands exist only in `TIMOTHY_MANAGEMENT_GUILD_ID`. Both are
+administrator-only and unavailable in DMs, which the backend enforces again on its own
+account after resolving the caller against Discord.
+
+`apps/bot/tests/command_surface.json` is the surface as it shipped before the rewrite;
+the tests compare against it, so a rename that would cost a moderator their muscle memory
+fails the build.
+
+Two settings matter when running a second instance against the same Discord application:
+`TIMOTHY_SYNC_COMMANDS=false` stops it overwriting the live command surface, and
+`TIMOTHY_GATEWAY_ENABLED=false` stops it connecting at all.
+
+The application needs the **Server Members** privileged intent. Without it Discord never
+sends `GUILD_MEMBER_ADD`, so a listed user who joins is not banned at the door — nothing
+else looks wrong, and the hourly sweep still catches them.
+
 ## Calling the API
 
 Everything but `/health` and `/openapi.json` needs two headers. The bearer token

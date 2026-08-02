@@ -48,7 +48,12 @@ services:
     environment:
       TIMOTHY_DISCORD_TOKEN: ${TIMOTHY_DISCORD_TOKEN:?set TIMOTHY_DISCORD_TOKEN in .env}
       TIMOTHY_INTERNAL_TOKEN: ${TIMOTHY_INTERNAL_TOKEN:?set TIMOTHY_INTERNAL_TOKEN in .env}
+      # The same guild the backend reads. Registering the pool commands anywhere else
+      # produces commands that are visible and always refused.
+      TIMOTHY_MANAGEMENT_GUILD_ID: ${TIMOTHY_MANAGEMENT_GUILD_ID:?set TIMOTHY_MANAGEMENT_GUILD_ID in .env}
       TIMOTHY_API_BASE_URL: http://backend:8000
+      TIMOTHY_GATEWAY_ENABLED: ${TIMOTHY_GATEWAY_ENABLED:-true}
+      TIMOTHY_SYNC_COMMANDS: ${TIMOTHY_SYNC_COMMANDS:-true}
       TIMOTHY_LOG_LEVEL: ${TIMOTHY_LOG_LEVEL:-INFO}
     networks: [timothy]
 

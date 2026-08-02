@@ -1,7 +1,8 @@
 """Entry point: `timothy-bot`.
 
-Phase 0 stands the process up and proves it can reach the backend. The gateway client,
-the event relay and the slash commands arrive in phase 4.
+Wait for the backend, then hold a gateway connection until something stops the process.
+The order matters: a bot that reached Discord before it could reach the backend would
+show a moderator a live command surface that answers every invocation with an error.
 """
 
 import asyncio
@@ -9,26 +10,45 @@ import logging
 
 import httpx
 
+from timothy_bot import api
+from timothy_bot.client import TimothyBot
 from timothy_bot.settings import Settings
 
 logger = logging.getLogger("timothy.bot")
 
 
-async def run(settings: Settings) -> None:
-    """Wait for the backend, then idle."""
-    async with httpx.AsyncClient(base_url=settings.api_base_url) as client:
-        response = await client.get("/health")
-        response.raise_for_status()
-        logger.info("backend reachable: %s", response.json())
+async def check_backend(client: httpx.AsyncClient) -> None:
+    """Confirm the backend is answering before opening the gateway."""
+    response = await client.get("/health")
+    response.raise_for_status()
+    logger.info("backend reachable: %s", response.json())
 
-    logger.info("no gateway client yet — phase 4")
-    await asyncio.Event().wait()  # pragma: no cover — the container idles here
+
+async def run(settings: Settings) -> None:
+    """Connect to the backend, then to Discord."""
+    async with api.create_client(
+        base_url=settings.api_base_url,
+        token=settings.internal_token.get_secret_value(),
+        timeout=settings.request_timeout,
+    ) as client:
+        await check_backend(client)
+
+        if not settings.gateway_enabled:
+            logger.warning("gateway disabled: TIMOTHY_GATEWAY_ENABLED is off")
+            await asyncio.Event().wait()  # pragma: no cover — the container idles here
+        else:
+            bot = TimothyBot(api.Api(client, actor=api.SYSTEM), settings)
+            async with bot:
+                await bot.start(settings.discord_token.get_secret_value())
 
 
 def main() -> None:
     """Configure logging and run."""
     settings = Settings()
-    logging.basicConfig(level=settings.log_level)
+    logging.basicConfig(level=settings.log_level.upper())
+    # httpx logs a line per request at INFO, and the relay already logs one per event
+    # saying what the backend decided. Two lines for every gateway event is one too many.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     asyncio.run(run(settings))
 
 

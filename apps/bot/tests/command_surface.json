@@ -1,0 +1,222 @@
+{
+  "global": {
+    "add_exception": {
+      "name": "add_exception",
+      "description": "Add a ban exception to your server",
+      "options": [
+        {
+          "name": "user_id",
+          "description": "User ID",
+          "required": true,
+          "type": 3
+        }
+      ],
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "add_notification": {
+      "name": "add_notification",
+      "description": "Set the channel used for banpool notifications",
+      "options": [
+        {
+          "name": "channel_id",
+          "description": "Channel to send notifications to",
+          "required": true,
+          "type": 7
+        }
+      ],
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "add_subscription": {
+      "name": "add_subscription",
+      "description": "Add a banpool subscription to your server",
+      "options": [
+        {
+          "name": "pool_name",
+          "description": "Pool Name",
+          "required": true,
+          "type": 3
+        },
+        {
+          "name": "subscription_level",
+          "description": "Subscription Level",
+          "required": true,
+          "type": 3,
+          "choices": [
+            {
+              "name": "warn",
+              "value": "warn"
+            },
+            {
+              "name": "ban",
+              "value": "ban"
+            }
+          ]
+        }
+      ],
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "delete_exception": {
+      "name": "delete_exception",
+      "description": "Remove a ban exception to your server",
+      "options": [
+        {
+          "name": "user_id",
+          "description": "User ID",
+          "required": true,
+          "type": 3
+        }
+      ],
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "delete_notification": {
+      "name": "delete_notification",
+      "description": "Unset the currently set channel for banpool notifications",
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "delete_subscription": {
+      "name": "delete_subscription",
+      "description": "Remove a banpool subscription from your server",
+      "options": [
+        {
+          "name": "pool_name",
+          "description": "pool_name",
+          "required": true,
+          "type": 3
+        }
+      ],
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "list_exceptions": {
+      "name": "list_exceptions",
+      "description": "List your server's ban exceptions",
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "list_notification": {
+      "name": "list_notification",
+      "description": "List the currently set channel for banpool notifications",
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "list_pools": {
+      "name": "list_pools",
+      "description": "List the existing Banpools",
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "list_subscriptions": {
+      "name": "list_subscriptions",
+      "description": "List your server's banpool subscriptions",
+      "dm_permission": false,
+      "default_member_permissions": 0
+    }
+  },
+  "management": {
+    "add_ban": {
+      "name": "add_ban",
+      "description": "Add a User ID to a banpool",
+      "options": [
+        {
+          "name": "user_id",
+          "description": "User ID",
+          "required": true,
+          "type": 3
+        },
+        {
+          "name": "pool_name",
+          "description": "Banpool name",
+          "required": true,
+          "type": 3
+        },
+        {
+          "name": "reason",
+          "description": "Reason for adding the user to the banpool",
+          "required": true,
+          "type": 3
+        }
+      ],
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "add_pool": {
+      "name": "add_pool",
+      "description": "Create a new banpool for adding users to and subscribing to.",
+      "options": [
+        {
+          "name": "pool_name",
+          "description": "Banpool name",
+          "required": true,
+          "type": 3
+        },
+        {
+          "name": "pool_desc",
+          "description": "Banpool description",
+          "required": true,
+          "type": 3
+        }
+      ],
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "delete_ban": {
+      "name": "delete_ban",
+      "description": "Remove a User ID from a banpool",
+      "options": [
+        {
+          "name": "user_id",
+          "required": true,
+          "description": "User ID",
+          "type": 3
+        },
+        {
+          "name": "pool_name",
+          "required": true,
+          "description": "Banpool name",
+          "type": 3
+        }
+      ],
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "delete_pool": {
+      "name": "delete_pool",
+      "description": "Delete a Banpool that was previously created.",
+      "options": [
+        {
+          "name": "pool_name",
+          "required": true,
+          "description": "Banpool name",
+          "type": 3
+        }
+      ],
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "get_user_bans": {
+      "name": "get_user_bans",
+      "description": "Gets the bans for a specific User ID",
+      "options": [
+        {
+          "name": "user_id",
+          "required": true,
+          "description": "User ID",
+          "type": 3
+        }
+      ],
+      "dm_permission": false,
+      "default_member_permissions": 0
+    },
+    "list_pools": {
+      "name": "list_pools",
+      "description": "List the existing Banpools",
+      "dm_permission": false,
+      "default_member_permissions": 0
+    }
+  }
+}

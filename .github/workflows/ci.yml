@@ -52,6 +52,10 @@ jobs:
       CLOUDFLARE_TUNNEL_TOKEN: ci-placeholder
       TIMOTHY_INTERNAL_TOKEN: ci-placeholder
       TIMOTHY_MANAGEMENT_GUILD_ID: "1"
+      # The bot would otherwise try to log in to Discord with the placeholder above and
+      # crash-loop. Everything up to that point — the image, the process, the backend
+      # connection — is still exercised; the gateway itself has no stand-in in CI.
+      TIMOTHY_GATEWAY_ENABLED: "false"
     steps:
       - uses: actions/checkout@v7
 
@@ -144,8 +148,51 @@ jobs:
           docker compose start backend
           docker compose up --wait --wait-timeout 60 backend
 
-      - name: The bot reached the backend
-        run: docker compose logs bot | grep -q 'backend reachable'
+      - name: The bot reached the backend before trying to reach Discord
+        run: |
+          docker compose logs bot | grep -q 'backend reachable'
+          docker compose logs bot | grep -q 'gateway disabled'
+
+      # The bot's own HTTP client against the real API: the internal token, the actor
+      # header and the routes, none of which the unit tests can prove together because
+      # the bot cannot import the backend. Registering a guild is the only call that
+      # needs no Discord, and with no `global` pool it enqueues nothing.
+      - name: The bot's API client is accepted by the backend
+        run: |
+          docker compose exec -T bot python -c "
+          import asyncio, sys
+          from timothy_bot import api
+
+          async def main():
+              async with api.create_client(
+                  base_url='http://backend:8000', token='ci-placeholder', timeout=5
+              ) as http:
+                  guild = await api.Api(http, actor=api.SYSTEM).register_guild(222222222222222222)
+                  assert guild['guild_id'] == '222222222222222222', guild
+                  try:
+                      await api.Api(http, actor='user:1').register_guild(1)
+                  except api.ApiError as refused:
+                      assert refused.status_code == 403, refused.detail
+                  else:
+                      sys.exit('a human was allowed to register a guild')
+
+          asyncio.run(main())
+          "
+
+      # The command tree is built from the same code that would upload it, so a command
+      # that cannot even be constructed fails here rather than at the first sync.
+      - name: The bot can build its command tree
+        run: |
+          docker compose exec -T bot python -c "
+          import discord, sys
+          from discord import app_commands
+          from timothy_bot import commands
+          tree = app_commands.CommandTree(discord.Client(intents=discord.Intents.none()))
+          commands.install(tree, management_guild_id=1)
+          names = {c.name for c in tree.get_commands()}
+          managed = {c.name for c in tree.get_commands(guild=discord.Object(id=1))}
+          sys.exit(0 if len(names) == 10 and len(managed) == 6 else 1)
+          "
 
       - name: The backend runs unprivileged
         run: test "$(docker compose exec -T backend id -u | tr -d '\r')" != "0"

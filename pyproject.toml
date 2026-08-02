@@ -110,6 +110,9 @@ root = [
     "apps/api/src",
     "apps/bot/src",
     "apps/api",  # so `tests` is a package and its `from .conftest import ...` resolves
+    # The bot's tests share `support.py` by plain import instead: two packages both named
+    # `tests` cannot both resolve, and only one of them can have the root.
+    "apps/bot/tests",
 ]
 
 [tool.ty.src]
@@ -140,6 +143,7 @@ addopts = [
     "-ra",
     "--import-mode=importlib",
 ]
+pythonpath = ["apps/bot/tests"]  # so `support` imports the same way the type checker reads it
 xfail_strict = true
 filterwarnings = ["error"]
 
