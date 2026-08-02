@@ -19,3 +19,7 @@ web/dist/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+# what `alembic upgrade head` writes when run by hand from packages/core
+*.db
+*.db-wal
+*.db-shm
