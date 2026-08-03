@@ -265,13 +265,15 @@ export function FilterBar({
       role="search"
       aria-label={label}
       className={cn(
-        "mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-surface-border",
+        "mb-4 flex flex-wrap items-start gap-3 rounded-lg border border-surface-border",
         "bg-surface-1 px-4 py-3",
       )}
     >
       {children}
       {onClear ? (
-        <Button size="sm" variant="ghost" className="ml-auto" onClick={onClear}>
+        // mt-6 clears the label row above each control, so the button sits on the row of
+        // controls rather than the row of labels.
+        <Button size="sm" variant="ghost" className="ml-auto mt-6" onClick={onClear}>
           Clear filters
         </Button>
       ) : null}
