@@ -158,5 +158,66 @@ def test_the_log_filters_by_action(pool: TestClient) -> None:
     assert [entry["action"] for entry in entries] == [AuditAction.LISTING_CREATE.value]
 
 
+def test_the_log_finds_a_user_wherever_they_are_recorded(pool: TestClient) -> None:
+    """The point of the box. A user ID is the actor on one line and the target on
+    another, and somebody asking "what happened to this person" wants both."""
+    pool.post(
+        "/pools/spam/listings",
+        json={"user_id": str(LISTED_USER), "reason": "spam"},
+        headers=headers(POOL_MANAGER),
+    )
+
+    entries = pool.get(f"/audit-log?q={LISTED_USER}", headers=headers(POOL_MANAGER)).json()
+
+    assert [entry["action"] for entry in entries] == [AuditAction.LISTING_CREATE.value]
+    assert entries[0]["target"] == f"listing:spam/{LISTED_USER}"
+
+
+def test_the_log_searches_the_detail(pool: TestClient) -> None:
+    """`detail` is JSON and it is where the reason, the level and the old name live.
+    Without it the box would miss the thing most worth finding."""
+    pool.post(
+        "/pools/spam/listings",
+        json={"user_id": str(LISTED_USER), "reason": "coordinated raid"},
+        headers=headers(POOL_MANAGER),
+    )
+
+    entries = pool.get("/audit-log?q=coordinated", headers=headers(POOL_MANAGER)).json()
+
+    assert [entry["action"] for entry in entries] == [AuditAction.LISTING_CREATE.value]
+
+
+def test_the_search_and_the_action_filter_narrow_together(pool: TestClient) -> None:
+    """Not one overriding the other: the dropdown says which kind of line, the box says
+    which subject, and answering "when was this user listed" needs both."""
+    pool.post(
+        "/pools/spam/listings",
+        json={"user_id": str(LISTED_USER), "reason": "spam"},
+        headers=headers(POOL_MANAGER),
+    )
+
+    entries = pool.get(
+        f"/audit-log?q={LISTED_USER}&action={AuditAction.POOL_CREATE.value}",
+        headers=headers(POOL_MANAGER),
+    ).json()
+
+    assert entries == []
+
+
+def test_a_wildcard_in_the_search_is_a_character_and_not_a_pattern(pool: TestClient) -> None:
+    """Somebody searching for `100%` is searching for a string. An unescaped `%` would
+    match every row in the table and look like the search had been ignored."""
+    pool.post(
+        "/pools/spam/listings",
+        json={"user_id": str(LISTED_USER), "reason": "spam"},
+        headers=headers(POOL_MANAGER),
+    )
+
+    # `%25` is a literal per cent sign once the URL is decoded.
+    entries = pool.get("/audit-log?q=%25", headers=headers(POOL_MANAGER)).json()
+
+    assert entries == []
+
+
 def test_an_absurd_page_size_is_refused(pool: TestClient) -> None:
     assert pool.get("/audit-log?limit=5000", headers=headers(POOL_MANAGER)).status_code == 422

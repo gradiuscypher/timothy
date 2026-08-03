@@ -4,10 +4,14 @@ import type { JobStatus } from "@/api/client";
 import { useOpsJobs } from "@/api/hooks";
 import {
   Badge,
+  Button,
   Card,
   Cell,
   Empty,
   ErrorNote,
+  Field,
+  FilterBar,
+  Input,
   Loading,
   PageTitle,
   Row,
@@ -24,6 +28,10 @@ import {
  * is answered by filtering and reading, which is somewhere you stay rather than glance.
  * It is also the widest table in the app: a kind, a JSON payload and an error message on
  * one row, which is why it takes the whole window (`wide` in `router.tsx`).
+ *
+ * The search reaches into the payload, which is where the IDs are. "Is there anything
+ * queued for this server" has no other answer — the kind says `enforce_guild` and the
+ * guild it is for is inside the JSON.
  */
 
 const JOB_STATUSES: Array<[JobStatus | "", string]> = [
@@ -45,50 +53,84 @@ const JOB_KINDS = [
   ["revert_subscription", "Lift bans for a subscription"],
 ] as const;
 
+const PAGE_SIZE = 50;
+
 export function Jobs() {
   const [status, setStatus] = useState<JobStatus | "">("");
   const [kind, setKind] = useState("");
-  const jobs = useOpsJobs(status, kind);
+  const [q, setQ] = useState("");
+  const [cursors, setCursors] = useState<Array<number | null>>([null]);
+  const before = cursors[cursors.length - 1] ?? null;
+  const jobs = useOpsJobs({ status, kind, q }, before);
+
+  const oldest = jobs.data?.[jobs.data.length - 1]?.id ?? null;
+  const hasMore = (jobs.data?.length ?? 0) === PAGE_SIZE;
+  const filtered = status !== "" || kind !== "" || q !== "";
+
+  /** A changed filter is a new sequence of pages, so the cursor into the old one goes. */
+  const narrow = (change: () => void) => {
+    change();
+    setCursors([null]);
+  };
 
   return (
     <>
-      <PageTitle
-        action={
-          <div className="flex gap-2">
-            <Select
-              aria-label="Filter by status"
-              value={status}
-              className="w-36"
-              onChange={(event) => setStatus(event.target.value as JobStatus | "")}
-            >
-              {JOB_STATUSES.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </Select>
-            <Select
-              aria-label="Filter by kind"
-              value={kind}
-              className="w-52"
-              onChange={(event) => setKind(event.target.value)}
-            >
-              {JOB_KINDS.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </Select>
-          </div>
+      <PageTitle>Jobs</PageTitle>
+
+      <FilterBar
+        label="Filter the queue"
+        onClear={
+          filtered
+            ? () =>
+                narrow(() => {
+                  setStatus("");
+                  setKind("");
+                  setQ("");
+                })
+            : undefined
         }
       >
-        Jobs
-      </PageTitle>
+        <Field
+          label="Search"
+          hint="A user or server ID from the payload, or words from the error."
+          className="min-w-64 grow"
+        >
+          <Input
+            type="search"
+            value={q}
+            placeholder="Any payload or error"
+            onChange={(event) => narrow(() => setQ(event.target.value))}
+          />
+        </Field>
+        <Field label="Status" className="w-40">
+          <Select
+            value={status}
+            onChange={(event) => narrow(() => setStatus(event.target.value as JobStatus | ""))}
+          >
+            {JOB_STATUSES.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Kind" className="w-56">
+          <Select value={kind} onChange={(event) => narrow(() => setKind(event.target.value))}>
+            {JOB_KINDS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </FilterBar>
 
       <Card label="Jobs">
         <ErrorNote error={jobs.error} />
         {jobs.isPending ? <Loading what="jobs" /> : null}
-        {jobs.data?.length === 0 ? <Empty>No jobs match.</Empty> : null}
+        {jobs.data?.length === 0 ? (
+          <Empty>{filtered ? "No jobs match those filters." : "The queue is empty."}</Empty>
+        ) : null}
 
         {jobs.data?.length ? (
           <Table head={["Kind", "Status", "Tries", "About", "Created", "Last error"]}>
@@ -118,6 +160,23 @@ export function Jobs() {
             ))}
           </Table>
         ) : null}
+
+        <div className="mt-3 flex items-center justify-between">
+          <Button
+            size="sm"
+            disabled={cursors.length === 1}
+            onClick={() => setCursors((previous) => previous.slice(0, -1))}
+          >
+            Newer
+          </Button>
+          <Button
+            size="sm"
+            disabled={!hasMore}
+            onClick={() => setCursors((previous) => [...previous, oldest])}
+          >
+            Older
+          </Button>
+        </div>
 
         <p className="mt-3 text-xs text-surface-muted">
           There is deliberately no retry here. A job is only abandoned after exhausting its

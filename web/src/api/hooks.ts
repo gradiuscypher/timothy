@@ -52,11 +52,12 @@ export const keys = {
   exceptions: (id: string) => ["guilds", id, "exceptions"] as const,
   channel: (id: string) => ["guilds", id, "notification-channel"] as const,
   enforcement: (id: string, status: string) => ["guilds", id, "enforcement", status] as const,
-  auditLog: (action: string) => ["audit-log", action] as const,
+  auditLog: (action: string, q: string) => ["audit-log", action, q] as const,
   opsOverview: (days: number) => ["ops", "overview", days] as const,
   opsActivity: (days: number) => ["ops", "activity", days] as const,
   opsFailures: ["ops", "failures"] as const,
-  opsJobs: (status: string, kind: string) => ["ops", "jobs", status, kind] as const,
+  opsJobs: (status: string, kind: string, q: string) =>
+    ["ops", "jobs", status, kind, q] as const,
 };
 
 // -- who is signed in ------------------------------------------------------------------
@@ -448,11 +449,12 @@ export function useEnforcement(
 }
 
 export function useAuditLog(
-  action: string,
+  filters: { action: string; q: string },
   beforeId: number | null,
 ): UseQueryResult<AuditEntry[]> {
+  const { action, q } = filters;
   return useQuery({
-    queryKey: [...keys.auditLog(action), beforeId],
+    queryKey: [...keys.auditLog(action, q), beforeId],
     placeholderData: (previous) => previous,
     queryFn: async () =>
       unwrap(
@@ -461,6 +463,7 @@ export function useAuditLog(
             query: {
               limit: 50,
               ...(action ? { action } : {}),
+              ...(q ? { q } : {}),
               ...(beforeId === null ? {} : { before_id: beforeId }),
             },
           },
@@ -505,9 +508,13 @@ export function useOpsFailures(): UseQueryResult<FailureGroup[]> {
   });
 }
 
-export function useOpsJobs(status: JobStatus | "", kind: string): UseQueryResult<Job[]> {
+export function useOpsJobs(
+  filters: { status: JobStatus | ""; kind: string; q: string },
+  beforeId: number | null = null,
+): UseQueryResult<Job[]> {
+  const { status, kind, q } = filters;
   return useQuery({
-    queryKey: keys.opsJobs(status, kind),
+    queryKey: [...keys.opsJobs(status, kind, q), beforeId],
     refetchInterval: OPS_REFRESH_MS,
     placeholderData: (previous) => previous,
     queryFn: async () =>
@@ -518,6 +525,8 @@ export function useOpsJobs(status: JobStatus | "", kind: string): UseQueryResult
               limit: 50,
               ...(status ? { status } : {}),
               ...(kind ? { kind } : {}),
+              ...(q ? { q } : {}),
+              ...(beforeId === null ? {} : { before_id: beforeId }),
             },
           },
         }),

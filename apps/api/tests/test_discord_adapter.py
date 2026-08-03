@@ -136,6 +136,27 @@ class StubChannel:
         self.sent.append(embed)
 
 
+class StubContainer:
+    """A channel that holds other channels — a category or a forum.
+
+    It carries a guild like any guild channel, and nothing can be posted to it, which is
+    the pair of facts `fetch_channel` reports.
+    """
+
+    def __init__(self, guild_id: int | None = GUILD) -> None:
+        if guild_id is not None:
+            self.guild = SimpleNamespace(id=guild_id)
+
+
+class StubTextChannel(StubContainer, discord.abc.Messageable):
+    """The same, but somewhere Timothy can actually say something.
+
+    Inherits discord.py's own `Messageable` rather than being shaped to look like one:
+    the adapter asks the library which of its channels can be sent to, so the stand-in
+    has to answer that question the library's way or the test proves nothing.
+    """
+
+
 class StubClient:
     def __init__(
         self,
@@ -144,11 +165,14 @@ class StubClient:
         channel: StubChannel | None = None,
         login_fails: Exception | None = None,
         fetch_fails: Exception | None = None,
+        lookup: object | Exception = None,
     ) -> None:
         self.guild = guild or StubGuild()
         self.channel = channel or StubChannel()
         self.login_fails = login_fails
         self.fetch_fails = fetch_fails
+        self.lookup = lookup
+        """What `fetch_channel` finds: a channel, or an exception to raise instead."""
         self.logins = 0
         self.closed = False
 
@@ -164,6 +188,11 @@ class StubClient:
         if self.fetch_fails is not None:
             raise self.fetch_fails
         return self.guild
+
+    async def fetch_channel(self, _channel_id: int, /) -> Any:  # noqa: ANN401
+        if isinstance(self.lookup, Exception):
+            raise self.lookup
+        return self.lookup
 
     def get_partial_messageable(self, _id: int, /) -> Any:  # noqa: ANN401
         return self.channel
@@ -362,6 +391,68 @@ async def test_closing_after_use_releases_the_session() -> None:
     await port.close()
 
     assert client.closed
+
+
+# -- fetching a channel ------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_a_channel_reports_the_guild_that_owns_it() -> None:
+    """The whole point: a notification channel may only be one its own guild owns."""
+    channel = await adapter(StubClient(lookup=StubTextChannel())).fetch_channel(
+        channel_id=CHANNEL
+    )
+
+    assert channel is not None
+    assert channel.guild_id == GUILD
+    assert channel.postable is True
+
+
+@pytest.mark.anyio
+async def test_a_dm_belongs_to_no_guild() -> None:
+    """No `guild` attribute at all, so no guild may nominate it."""
+    channel = await adapter(StubClient(lookup=StubTextChannel(None))).fetch_channel(
+        channel_id=CHANNEL
+    )
+
+    assert channel is not None
+    assert channel.guild_id is None
+
+
+@pytest.mark.anyio
+async def test_a_container_is_owned_but_not_postable() -> None:
+    """A category belongs to the guild and is still not a place to say something, so the
+    two facts have to be reported separately."""
+    channel = await adapter(StubClient(lookup=StubContainer())).fetch_channel(
+        channel_id=CHANNEL
+    )
+
+    assert channel is not None
+    assert channel.guild_id == GUILD
+    assert channel.postable is False
+
+
+@pytest.mark.anyio
+async def test_a_channel_that_is_gone_is_absent_not_an_error() -> None:
+    client = StubClient(lookup=discord.NotFound(response(404), "gone"))
+
+    assert await adapter(client).fetch_channel(channel_id=CHANNEL) is None
+
+
+@pytest.mark.anyio
+async def test_a_channel_timothy_cannot_see_is_also_absent() -> None:
+    """For this question the two are the same: a channel Timothy cannot read is one it
+    could not have been given."""
+    client = StubClient(lookup=discord.Forbidden(response(403), "no"))
+
+    assert await adapter(client).fetch_channel(channel_id=CHANNEL) is None
+
+
+@pytest.mark.anyio
+async def test_discord_being_down_still_raises() -> None:
+    """Absence is an answer; unavailability is not, and must not read as "no channel"."""
+    with pytest.raises(DiscordUnavailableError):
+        await adapter(StubClient(lookup=http_error(503))).fetch_channel(channel_id=CHANNEL)
 
 
 def test_the_real_client_satisfies_the_adapter() -> None:

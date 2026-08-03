@@ -310,6 +310,44 @@ def test_the_jobs_view_can_be_narrowed_to_one_kind(pool: TestClient) -> None:
     assert [job["kind"] for job in jobs] == ["enforce_listing"]
 
 
+def test_the_jobs_view_searches_the_payload(pool: TestClient) -> None:
+    """The payload is JSON, and it is where the IDs are. An operator asking "is there
+    anything queued for this guild" has nothing else to type."""
+    _subscribe(pool)
+    _list(pool)
+
+    for_guild = pool.get(f"/ops/jobs?q={GUILD}", headers=headers(OWNER)).json()
+
+    assert [job["kind"] for job in for_guild] == ["enforce_subscription"]
+    assert str(GUILD) in str(for_guild[0]["payload"])
+
+
+def test_the_jobs_search_reads_the_error_a_job_gave_up_with(
+    pool: TestClient, settings: Settings, enforcement: Enforcement
+) -> None:
+    insert_job(settings, "nonsense", {})
+    base = datetime.now(UTC)
+    for attempt in range(1, settings.job_max_attempts + 2):
+        enforcement.run_once(now=at(base + timedelta(hours=attempt)))
+
+    found = pool.get("/ops/jobs?q=nonsense", headers=headers(OWNER)).json()
+
+    assert [job["kind"] for job in found] == ["nonsense"]
+
+
+def test_the_jobs_search_narrows_alongside_the_dropdowns_rather_than_replacing_them(
+    pool: TestClient,
+) -> None:
+    _subscribe(pool)
+    _list(pool)
+
+    both = pool.get(
+        f"/ops/jobs?q={GUILD}&kind={JobKind.ENFORCE_LISTING.value}", headers=headers(OWNER)
+    ).json()
+
+    assert both == []
+
+
 def test_the_jobs_view_pages_by_id(pool: TestClient) -> None:
     _subscribe(pool)
     _list(pool)

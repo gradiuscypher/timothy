@@ -3,6 +3,7 @@
 from fastapi.testclient import TestClient
 
 from timothy_api.app import create_app
+from timothy_api.schemas import MAX_DESCRIPTION
 from timothy_api.settings import Settings
 from timothy_core.ports.fake import FakeDiscord
 
@@ -225,3 +226,13 @@ def test_deleting_a_pool_takes_its_listings_with_it(pool: TestClient) -> None:
         "/users/300000000000000001/listings", headers=headers(POOL_MANAGER)
     ).json()
     assert listings == []
+
+
+def test_a_pool_description_is_bounded(registered: TestClient) -> None:
+    response = registered.post(
+        "/pools",
+        json={"name": "spam", "description": "x" * (MAX_DESCRIPTION + 1)},
+        headers=headers(POOL_MANAGER),
+    )
+
+    assert response.status_code == 422

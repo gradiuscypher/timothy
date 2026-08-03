@@ -265,4 +265,66 @@ describe("the audit log", () => {
     await screen.findByText("pool.create");
     expect(screen.getByRole("button", { name: "Older" })).toBeDisabled();
   });
+
+  it("searches and filters at the backend, together", async () => {
+    // Both narrow the record, not the fifty rows already fetched — the log has no
+    // ceiling on it, and filtering the page would search the page.
+    const asked: URLSearchParams[] = [];
+    server.use(
+      http.get(apiUrl("/audit-log"), ({ request }) => {
+        asked.push(new URL(request.url).searchParams);
+        return HttpResponse.json([entry(1, "user:1", "pool.create")]);
+      }),
+    );
+
+    const { user } = renderWithQuery(<AuditLog />);
+    await screen.findByText("pool.create");
+
+    await user.selectOptions(screen.getByLabelText("Action"), "enforcement.ban");
+    await user.type(screen.getByLabelText("Search"), "3000000");
+
+    await waitFor(() => {
+      expect(asked.at(-1)?.get("q")).toBe("3000000");
+      expect(asked.at(-1)?.get("action")).toBe("enforcement.ban");
+    });
+  });
+
+  it("starts the paging over when the search changes", async () => {
+    // A cursor from the unfiltered log points into a sequence the filtered log does not
+    // have, so the reader would land in the middle of results they never saw the start
+    // of.
+    const asked: URLSearchParams[] = [];
+    server.use(
+      http.get(apiUrl("/audit-log"), ({ request }) => {
+        asked.push(new URL(request.url).searchParams);
+        return HttpResponse.json(
+          Array.from({ length: 50 }, (_, index) =>
+            entry(100 - index, "user:1", "listing.create"),
+          ),
+        );
+      }),
+    );
+
+    const { user } = renderWithQuery(<AuditLog />);
+    await screen.findAllByText("listing.create");
+
+    await user.click(screen.getByRole("button", { name: "Older" }));
+    await waitFor(() => expect(asked.at(-1)?.get("before_id")).toBe("51"));
+
+    await user.type(screen.getByLabelText("Search"), "spam");
+
+    await waitFor(() => expect(asked.at(-1)?.get("before_id")).toBeNull());
+  });
+
+  it("says the log is empty differently from a search that found nothing", async () => {
+    server.use(get("/audit-log", []));
+
+    const { user } = renderWithQuery(<AuditLog />);
+
+    expect(await screen.findByText("Nothing recorded.")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Search"), "nobody");
+
+    expect(await screen.findByText("Nothing matches those filters.")).toBeInTheDocument();
+  });
 });

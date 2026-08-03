@@ -1,6 +1,6 @@
 """Everything Timothy needs from Discord, and nothing else.
 
-Five operations, deliberately (ADR 0007). Banning real people is not meaningfully
+Six operations, deliberately (ADR 0007). Banning real people is not meaningfully
 reversible at the far end, so the surface that can do it is kept narrow enough to read
 in one sitting, and narrow enough for a fake to implement honestly.
 
@@ -78,6 +78,26 @@ class Notice:
     title: str
     body: str
     colour: int
+
+
+@dataclass(frozen=True, slots=True)
+class Channel:
+    """A channel Timothy has been pointed at, and the two facts that decide if it may be.
+
+    Both are asked once, when a guild's notification channel is configured, and never
+    again: a channel ID is bound to its guild for the channel's whole life, so the
+    relationship cannot drift under a stored row the way a permission can.
+    """
+
+    channel_id: int
+
+    guild_id: int | None
+    """Which guild owns it. `None` for a DM, which no guild owns and no guild may
+    nominate."""
+
+    postable: bool
+    """Whether a notice can be sent here at all — false for a category or a forum, which
+    are containers rather than places to say something."""
 
 
 class DiscordError(Exception):
@@ -161,6 +181,25 @@ class DiscordPort(Protocol):
 
         Raises:
             NotFoundError: the guild is gone, or Timothy is no longer in it.
+            RateLimitedError: back off and retry.
+            DiscordUnavailableError: transport or 5xx failure.
+        """
+        ...
+
+    async def fetch_channel(self, *, channel_id: int) -> Channel | None:
+        """Look a channel up, or `None` if Timothy cannot see one by that ID.
+
+        Absence is an ordinary answer rather than an error, as it is for
+        :meth:`fetch_member`: a moderator pasting a channel ID gets it wrong more often
+        than Discord breaks, and "no such channel" is a thing to tell them rather than a
+        failure to retry.
+
+        Asked when a notification channel is configured, so that a guild cannot nominate
+        a channel belonging to some other guild. Deliberately *not* asked again at send
+        time: the answer cannot change, and the send path already costs one Discord call
+        per listed user per guild.
+
+        Raises:
             RateLimitedError: back off and retry.
             DiscordUnavailableError: transport or 5xx failure.
         """

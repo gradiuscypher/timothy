@@ -5,6 +5,7 @@ from collections.abc import Callable
 from fastapi.testclient import TestClient
 
 from timothy_api.jobs import JobKind
+from timothy_api.schemas import MAX_REASON
 
 from .conftest import GUILD, GUILD_ADMIN, LISTED_USER, MEMBER, POOL_MANAGER, headers
 
@@ -119,3 +120,15 @@ def test_leaving_a_guild_forgets_its_exceptions(registered: TestClient) -> None:
     listed = registered.get(f"/guilds/{GUILD}/exceptions", headers=headers(GUILD_ADMIN))
 
     assert listed.json() == []
+
+
+def test_a_vouching_reason_is_bounded(registered: TestClient) -> None:
+    """Not a Discord limit here — an exception reason is never posted — but the same
+    bound, so there is one answer to "how much free text may a moderator send"."""
+    response = registered.put(
+        f"/guilds/{GUILD}/exceptions/{LISTED_USER}",
+        json={"reason": "x" * (MAX_REASON + 1)},
+        headers=headers(GUILD_ADMIN),
+    )
+
+    assert response.status_code == 422

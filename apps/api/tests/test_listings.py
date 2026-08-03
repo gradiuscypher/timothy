@@ -5,6 +5,7 @@ from collections.abc import Callable
 from fastapi.testclient import TestClient
 
 from timothy_api.jobs import JobKind
+from timothy_api.schemas import MAX_REASON
 from timothy_core.ports.fake import FakeDiscord
 
 from .conftest import GUILD_ADMIN, LISTED_USER, MEMBER, POOL_MANAGER, headers
@@ -160,3 +161,37 @@ def test_a_snowflake_survives_the_round_trip_exactly(pool: TestClient) -> None:
     page = pool.get("/pools/spam/listings", headers=headers(POOL_MANAGER)).json()
 
     assert page["listings"][0]["user_id"] == str(big)
+
+
+def test_a_reason_longer_than_the_limit_is_refused(pool: TestClient) -> None:
+    """Bounded from what happens downstream: a reason reaches a Discord embed, a ban's
+    audit reason, and — in bulk — every listing row, audit row and job in the request."""
+    response = pool.post(
+        "/pools/spam/listings",
+        json={"user_id": str(LISTED_USER), "reason": "x" * (MAX_REASON + 1)},
+        headers=headers(POOL_MANAGER),
+    )
+
+    assert response.status_code == 422
+
+
+def test_a_reason_at_the_limit_is_accepted(pool: TestClient) -> None:
+    response = pool.post(
+        "/pools/spam/listings",
+        json={"user_id": str(LISTED_USER), "reason": "x" * MAX_REASON},
+        headers=headers(POOL_MANAGER),
+    )
+
+    assert response.status_code == 201
+
+
+def test_a_bulk_reason_is_bounded_too(pool: TestClient) -> None:
+    """The route with no circuit breaker over it, so the one place the bound is the only
+    thing standing between a paste and 500 copies of it."""
+    response = pool.post(
+        "/pools/spam/listings/bulk",
+        json={"user_ids": [str(LISTED_USER)], "reason": "x" * (MAX_REASON + 1)},
+        headers=headers(POOL_MANAGER),
+    )
+
+    assert response.status_code == 422

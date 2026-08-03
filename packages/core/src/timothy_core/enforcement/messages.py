@@ -24,6 +24,16 @@ BAN_AUDIT_REASON_LIMIT: Final = 512
 """Discord truncates the audit-log reason at 512 characters, so Timothy does it first
 and marks where it cut."""
 
+NOTICE_BODY_LIMIT: Final = 4096
+"""Discord *rejects* an embed description over 4096 characters rather than truncating it,
+which is the difference that makes this cap load-bearing.
+
+The API bounds a single reason well under this, but `ban_notice` joins one line per pool
+that justified the ban, so enough subscriptions clear the limit from bounded parts. An
+over-long notice would fail to post, record `FAILED`, and — because `FAILED` is
+deliberately not a settled outcome — be retried by every sweep round forever. Cutting the
+body is how a bad reason stays a cosmetic problem instead of an immortal job."""
+
 WARN_COLOUR: Final = 0xFEE75C
 """Discord's own yellow. A warn is the colour of something to look at, not something
 that happened."""
@@ -48,14 +58,23 @@ BAN_TEMPLATE: Final = """\
 Lift it with Discord's own unban if this was wrong — Timothy will not reissue it."""
 
 
+def _within_limit(body: str) -> str:
+    """A body Discord will accept, marked where it was cut."""
+    if len(body) <= NOTICE_BODY_LIMIT:
+        return body
+    return body[: NOTICE_BODY_LIMIT - 1] + "…"
+
+
 def warn_notice(*, user_id: int, listing: PoolListing) -> Notice:
     """The notice for one warn-level match, for the guild's notification channel."""
     return Notice(
         title=WARN_TITLE,
-        body=WARN_TEMPLATE.format(
-            user_id=user_id,
-            pool=listing.pool_name,
-            reason=listing.reason,
+        body=_within_limit(
+            WARN_TEMPLATE.format(
+                user_id=user_id,
+                pool=listing.pool_name,
+                reason=listing.reason,
+            )
         ),
         colour=WARN_COLOUR,
     )
@@ -72,7 +91,7 @@ def ban_notice(*, user_id: int, justifications: Iterable[PoolListing]) -> Notice
     )
     return Notice(
         title=BAN_TITLE,
-        body=BAN_TEMPLATE.format(user_id=user_id, pools=pools),
+        body=_within_limit(BAN_TEMPLATE.format(user_id=user_id, pools=pools)),
         colour=BAN_COLOUR,
     )
 

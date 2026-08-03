@@ -8,6 +8,9 @@ import {
   Cell,
   Empty,
   ErrorNote,
+  Field,
+  FilterBar,
+  Input,
   Loading,
   PageTitle,
   Row,
@@ -25,6 +28,10 @@ import {
  *
  * Paged by id rather than offset, because the table only grows at one end and an offset
  * shifts under a reader as new rows arrive.
+ *
+ * Both filters narrow at the backend rather than in the table, because the table on
+ * screen is fifty rows of a log with no ceiling on it — filtering what has already been
+ * fetched would search the last page rather than the record.
  */
 
 const ACTIONS = [
@@ -55,25 +62,57 @@ const PAGE_SIZE = 50;
 
 export function AuditLog() {
   const [action, setAction] = useState("");
+  const [q, setQ] = useState("");
   const [cursors, setCursors] = useState<Array<number | null>>([null]);
   const before = cursors[cursors.length - 1] ?? null;
-  const entries = useAuditLog(action, before);
+  const entries = useAuditLog({ action, q }, before);
 
   const oldest = entries.data?.[entries.data.length - 1]?.id ?? null;
   const hasMore = (entries.data?.length ?? 0) === PAGE_SIZE;
+  const filtered = action !== "" || q !== "";
+
+  /**
+   * Every filter change starts the paging over. The cursor is an id from the page you
+   * were on, and under a different filter it points into a sequence that no longer
+   * exists — you would land in the middle of results you had never seen the start of.
+   */
+  const narrow = (change: () => void) => {
+    change();
+    setCursors([null]);
+  };
 
   return (
     <>
-      <PageTitle
-        action={
+      <PageTitle>Audit log</PageTitle>
+
+      <FilterBar
+        label="Filter the audit log"
+        onClear={
+          filtered
+            ? () =>
+                narrow(() => {
+                  setAction("");
+                  setQ("");
+                })
+            : undefined
+        }
+      >
+        <Field
+          label="Search"
+          hint="A user or server ID, a pool name, or any word from the detail."
+          className="min-w-64 grow"
+        >
+          <Input
+            type="search"
+            value={q}
+            placeholder="Anyone, anything"
+            onChange={(event) => narrow(() => setQ(event.target.value))}
+          />
+        </Field>
+        <Field label="Action" className="w-72">
           <Select
-            aria-label="Filter by action"
             value={action}
-            className="w-72"
-            onChange={(event) => {
-              setAction(event.target.value);
-              setCursors([null]);
-            }}
+            onChange={(event) => narrow(() => setAction(event.target.value))}
           >
             {ACTIONS.map(([value, label]) => (
               <option key={value} value={value}>
@@ -81,15 +120,15 @@ export function AuditLog() {
               </option>
             ))}
           </Select>
-        }
-      >
-        Audit log
-      </PageTitle>
+        </Field>
+      </FilterBar>
 
       <Card label="Audit log">
         <ErrorNote error={entries.error} />
         {entries.isPending ? <Loading what="the audit log" /> : null}
-        {entries.data?.length === 0 ? <Empty>Nothing recorded.</Empty> : null}
+        {entries.data?.length === 0 ? (
+          <Empty>{filtered ? "Nothing matches those filters." : "Nothing recorded."}</Empty>
+        ) : null}
 
         {entries.data?.length ? (
           <Table head={["When", "Who", "Did what", "To what", "Detail"]}>

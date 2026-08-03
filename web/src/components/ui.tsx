@@ -177,16 +177,19 @@ export function ChoiceList<T extends string>({
 export function Field({
   label,
   hint,
+  className,
   children,
 }: {
   label: string;
   hint?: string;
+  /** Sizing, for a field that is one of several in a row. */
+  className?: string;
   children: ReactElement<{ id?: string; "aria-describedby"?: string }>;
 }) {
   const id = useId();
   const hintId = hint ? `${id}-hint` : undefined;
   return (
-    <div className="space-y-1">
+    <div className={cn("space-y-1", className)}>
       <label htmlFor={id} className="block text-sm font-medium">
         {label}
       </label>
@@ -232,6 +235,47 @@ export function CardTitle({ children, action }: { children: ReactNode; action?: 
       <h2 className="text-base font-semibold">{children}</h2>
       {action}
     </header>
+  );
+}
+
+/**
+ * The strip that decides which rows are below it.
+ *
+ * A bar of its own rather than controls tucked into the page title, because these two
+ * screens are read by narrowing them: the audit log and the job queue are both far
+ * longer than anybody scrolls, and the box you type a snowflake into is the first thing
+ * on them worth reaching. Labels are drawn rather than left to `aria-label`, which is a
+ * name for the control and not a thing anybody can see.
+ *
+ * `role="search"` makes it a landmark, so it can be jumped to instead of tabbed to.
+ */
+export function FilterBar({
+  label,
+  onClear,
+  children,
+}: {
+  label: string;
+  /** Passed only when something is actually set: a "Clear" that is always there reads
+   *  as a filter that is always on. */
+  onClear?: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role="search"
+      aria-label={label}
+      className={cn(
+        "mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-surface-border",
+        "bg-surface-1 px-4 py-3",
+      )}
+    >
+      {children}
+      {onClear ? (
+        <Button size="sm" variant="ghost" className="ml-auto" onClick={onClear}>
+          Clear filters
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

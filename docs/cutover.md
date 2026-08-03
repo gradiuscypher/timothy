@@ -264,6 +264,15 @@ In this order:
    drifted. A tripped breaker pauses that guild and asks for a human, which is what it is
    for: resume it deliberately, do not raise the limit to get past it.
 
+   **The breaker covers the sweep and it covers subscribing, which is what matters here.**
+   Both are many users in one guild, and each is a single run whose budget they share. It
+   does *not* cover listing users one at a time or in bulk: each of those is its own run
+   spending one action per guild, so a 500-entry bulk listing can land 500 actions in a
+   guild without the limit ever being reached. During cutover nothing takes that path —
+   the migration loads listings before enforcement is live, and the sweep is what acts on
+   them — but do not read a quiet `enforcement.breaker_tripped` as proof that a bulk
+   listing was safe.
+
 ### Every round takes about two days, so the sweep runs weekly
 
 A round asks Discord "is this user in this guild?" once per listed user per subscribed

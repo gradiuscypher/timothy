@@ -18,6 +18,7 @@ from typing import Protocol, cast
 import discord
 
 from timothy_core.ports.discord import (
+    Channel,
     DiscordError,
     DiscordUnavailableError,
     ForbiddenError,
@@ -90,6 +91,12 @@ class RestClient(Protocol):
         """Fetch a guild, with its roles, so permissions can be resolved from it."""
         ...
 
+    async def fetch_channel(
+        self, channel_id: int, /
+    ) -> "discord.abc.GuildChannel | discord.Thread | discord.abc.PrivateChannel":
+        """Fetch a channel, so its owning guild can be read off it."""
+        ...
+
     def get_partial_messageable(self, id: int, /) -> discord.PartialMessageable:  # noqa: A002
         """A channel handle that costs no round trip."""
         ...
@@ -104,7 +111,7 @@ class RestClient(Protocol):
 
 
 class DiscordAdapter:
-    """Timothy's five Discord operations, and nothing else."""
+    """Timothy's six Discord operations, and nothing else."""
 
     def __init__(self, client: RestClient, token: str) -> None:
         """Wrap a client. Nothing reaches Discord until the first call."""
@@ -198,6 +205,31 @@ class DiscordAdapter:
         except Exception as error:
             raise translate(error) from error
         return GuildPermissions(value=member.guild_permissions.value)
+
+    async def fetch_channel(self, *, channel_id: int) -> Channel | None:
+        """Look a channel up. Absence is an answer, not an error.
+
+        `postable` is `isinstance(..., Messageable)` rather than a list of type numbers
+        this module would have to keep current: discord.py already knows which of its
+        channel classes can be sent to, and which are containers.
+        """
+        client = await self._ready()
+        try:
+            channel = await client.fetch_channel(channel_id)
+        except discord.NotFound:
+            return None
+        except discord.Forbidden:
+            # Timothy cannot see it, which for this question is the same as it not being
+            # there: a channel it cannot read is one it could not have been given.
+            return None
+        except Exception as error:
+            raise translate(error) from error
+        guild = getattr(channel, "guild", None)
+        return Channel(
+            channel_id=channel_id,
+            guild_id=guild.id if guild is not None else None,
+            postable=isinstance(channel, discord.abc.Messageable),
+        )
 
     async def post_message(self, *, channel_id: int, notice: Notice) -> None:
         """Post a notice to a channel, without spending a call to look it up first."""

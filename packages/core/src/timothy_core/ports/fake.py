@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from timothy_core.ports.discord import (
+    Channel,
     DiscordError,
     GuildPermissions,
     Member,
@@ -24,7 +25,14 @@ from timothy_core.ports.discord import (
     RateLimitedError,
 )
 
-Operation = Literal["ban", "unban", "fetch_member", "guild_permissions", "post_message"]
+Operation = Literal[
+    "ban",
+    "unban",
+    "fetch_member",
+    "guild_permissions",
+    "fetch_channel",
+    "post_message",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,8 +81,8 @@ class FakeDiscord:
     def __init__(self) -> None:
         """Start empty: no guilds, no failures, no rate limit."""
         self.guilds: dict[int, FakeGuild] = {}
-        self.channels: dict[int, int] = {}
-        """Channel ID to the guild it belongs to."""
+        self.channels: dict[int, Channel] = {}
+        """Channel ID to the channel, which carries the guild that owns it."""
 
         self.messages: list[PostedMessage] = []
         self.calls: list[Call] = []
@@ -114,9 +122,17 @@ class FakeDiscord:
         guild.permissions[user_id] = permissions or GuildPermissions.none()
         return member
 
-    def add_channel(self, channel_id: int, guild_id: int) -> None:
-        """Give a guild a channel Timothy can post in."""
-        self.channels[channel_id] = guild_id
+    def add_channel(
+        self, channel_id: int, guild_id: int | None, *, postable: bool = True
+    ) -> None:
+        """Give a guild a channel Timothy can post in.
+
+        `guild_id=None` is a DM, and `postable=False` a category or a forum: the two
+        shapes a moderator can paste that no guild may nominate.
+        """
+        self.channels[channel_id] = Channel(
+            channel_id=channel_id, guild_id=guild_id, postable=postable
+        )
 
     # -- failure injection ---------------------------------------------------
 
@@ -196,6 +212,12 @@ class FakeDiscord:
         guild = self._guild(guild_id)
         self._raise_if_injected("guild_permissions", guild_id, user_id)
         return guild.permissions.get(user_id, GuildPermissions.none())
+
+    async def fetch_channel(self, *, channel_id: int) -> Channel | None:
+        """Look a channel up. `None` when the fake has never heard of it."""
+        self.calls.append(Call("fetch_channel", channel_id=channel_id))
+        self._spend_call()
+        return self.channels.get(channel_id)
 
     async def post_message(self, *, channel_id: int, notice: Notice) -> None:
         """Post a notice to a channel.

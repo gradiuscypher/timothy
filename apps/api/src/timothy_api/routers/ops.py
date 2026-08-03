@@ -38,6 +38,7 @@ from timothy_api.schemas import (
     OutcomeCounts,
     QueueDepth,
 )
+from timothy_api.search import MAX_QUERY, matching
 from timothy_core.actors import Actor
 from timothy_core.db.models import (
     AuditLogEntry,
@@ -71,6 +72,17 @@ StatusFilter = Annotated[
 ]
 KindFilter = Annotated[
     str | None, Query(description="Only jobs of this kind, e.g. `enforce_guild`.")
+]
+Search = Annotated[
+    str | None,
+    Query(
+        min_length=1,
+        max_length=MAX_QUERY,
+        description=(
+            "Match against the kind, the payload, or the last error as text. A user or "
+            "guild ID finds the queued work about it."
+        ),
+    ),
 ]
 
 DEFAULT_DAYS = 14
@@ -263,6 +275,7 @@ async def read_jobs(
     before_id: Before = None,
     status: StatusFilter = None,
     kind: KindFilter = None,
+    q: Search = None,
 ) -> list[JobRead]:
     """The queue itself, newest first.
 
@@ -280,5 +293,7 @@ async def read_jobs(
         query = query.where(Job.status == status)
     if kind is not None:
         query = query.where(Job.kind == kind)
+    if q is not None:
+        query = query.where(matching(q, Job.kind, Job.payload, Job.last_error))
 
     return [JobRead.of(job) for job in await session.scalars(query)]

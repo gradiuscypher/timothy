@@ -2,6 +2,7 @@ from timothy_core.enforcement.decisions import PoolListing
 from timothy_core.enforcement.messages import (
     BAN_AUDIT_REASON_LIMIT,
     BAN_COLOUR,
+    NOTICE_BODY_LIMIT,
     WARN_COLOUR,
     ban_audit_reason,
     ban_notice,
@@ -65,3 +66,30 @@ def test_a_ban_reason_is_truncated_before_discord_does_it() -> None:
 
     assert len(reason) == BAN_AUDIT_REASON_LIMIT
     assert reason.endswith("…")
+
+
+def test_a_warn_notice_is_cut_to_something_discord_will_accept() -> None:
+    """Discord rejects an over-long embed rather than truncating it, and a rejected
+    notice records `FAILED` — which never settles, so the sweep retries it forever."""
+    wordy = PoolListing(pool_id=1, pool_name="global", reason="x" * (NOTICE_BODY_LIMIT * 2))
+
+    notice = warn_notice(user_id=42, listing=wordy)
+
+    assert len(notice.body) == NOTICE_BODY_LIMIT
+    assert notice.body.endswith("…")
+
+
+def test_a_ban_notice_is_cut_even_when_every_reason_is_within_bounds() -> None:
+    """The case the API's per-reason limit cannot catch: one line per justifying pool,
+    each of them legal on its own."""
+    many = [PoolListing(pool_id=n, pool_name=f"pool{n}", reason="x" * 1000) for n in range(10)]
+
+    notice = ban_notice(user_id=42, justifications=many)
+
+    assert len(notice.body) == NOTICE_BODY_LIMIT
+    assert notice.body.endswith("…")
+
+
+def test_an_ordinary_notice_is_left_alone() -> None:
+    assert not warn_notice(user_id=42, listing=GLOBAL).body.endswith("…")
+    assert not ban_notice(user_id=42, justifications=[GLOBAL]).body.endswith("…")

@@ -49,6 +49,18 @@ function opsScreen(overview: Record<string, unknown> = {}, extra: unknown[] = []
   return renderApp("/ops");
 }
 
+/** Every `/ops/jobs` request made from now on, as its query string. */
+function watchJobRequests(): URLSearchParams[] {
+  const asked: URLSearchParams[] = [];
+  server.use(
+    http.get(apiUrl("/ops/jobs"), ({ request }) => {
+      asked.push(new URL(request.url).searchParams);
+      return HttpResponse.json([]);
+    }),
+  );
+  return asked;
+}
+
 /** The queue is its own page, and asks for nothing but the queue. */
 function jobsScreen(jobs: unknown[] = []) {
   server.use(get("/auth/me", OWNER), get("/ops/jobs", jobs as never));
@@ -290,21 +302,73 @@ describe("the job list", () => {
   });
 
   it("filters at the backend rather than in the table", async () => {
+    // Fifty rows of a queue with no ceiling on it. Narrowing what has already been
+    // fetched would search the last page rather than the queue.
     const { user } = jobsScreen();
-    await screen.findByLabelText("Filter by status");
+    await screen.findByLabelText("Status");
 
     // Registered after the screen is up: `server.use` prepends, so this has to come
     // second to win over the one `jobsScreen` installed.
-    const asked: Array<string | null> = [];
-    server.use(
-      http.get(apiUrl("/ops/jobs"), ({ request }) => {
-        asked.push(new URL(request.url).searchParams.get("status"));
-        return HttpResponse.json([]);
-      }),
+    const asked = watchJobRequests();
+
+    await user.selectOptions(screen.getByLabelText("Status"), "failed");
+
+    await waitFor(() => expect(asked.at(-1)?.get("status")).toBe("failed"));
+  });
+
+  it("searches the backend too, and keeps the dropdowns while it does", async () => {
+    // The payload is JSON and it is where the IDs are, so "anything queued for this
+    // server" is a question only the backend can answer.
+    const { user } = jobsScreen();
+    await screen.findByLabelText("Search");
+
+    const asked = watchJobRequests();
+
+    await user.selectOptions(screen.getByLabelText("Status"), "failed");
+    await user.type(screen.getByLabelText("Search"), "100000000000000002");
+
+    await waitFor(() => {
+      expect(asked.at(-1)?.get("q")).toBe("100000000000000002");
+      expect(asked.at(-1)?.get("status")).toBe("failed");
+    });
+  });
+
+  it("starts the paging over when a filter changes", async () => {
+    // The cursor is an id from the page you were on. Under a different filter it points
+    // into a sequence that no longer exists.
+    const { user } = jobsScreen(
+      Array.from({ length: 50 }, (_, index) => ({
+        id: 100 - index,
+        kind: "enforce_guild",
+        payload: {},
+        run_after: "2026-08-02T00:00:00Z",
+        attempts: 0,
+        status: "pending",
+        last_error: null,
+        created_at: "2026-08-01T00:00:00Z",
+      })),
     );
 
-    await user.selectOptions(screen.getByLabelText("Filter by status"), "failed");
+    await screen.findByRole("button", { name: "Older" });
+    const asked = watchJobRequests();
 
-    await waitFor(() => expect(asked.at(-1)).toBe("failed"));
+    await user.click(screen.getByRole("button", { name: "Older" }));
+    // The oldest row on the page is the cursor into the next one.
+    await waitFor(() => expect(asked.at(-1)?.get("before_id")).toBe("51"));
+
+    await user.selectOptions(screen.getByLabelText("Status"), "failed");
+
+    await waitFor(() => expect(asked.at(-1)?.get("before_id")).toBeNull());
+  });
+
+  it("offers a way out of the filters only once they are on", async () => {
+    const { user } = jobsScreen();
+    await screen.findByLabelText("Status");
+    expect(screen.queryByRole("button", { name: "Clear filters" })).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Status"), "failed");
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    expect(screen.getByLabelText("Status")).toHaveValue("");
   });
 });

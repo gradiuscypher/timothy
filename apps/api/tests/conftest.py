@@ -67,6 +67,15 @@ be a management administrator could not tell the two apart."""
 LISTED_USER = 300_000_000_000_000_001
 CHANNEL = 400_000_000_000_000_001
 
+OTHER_CHANNEL = 400_000_000_000_000_002
+"""A channel in `OTHER_GUILD`, so a test can try to have one guild nominate another's."""
+
+CATEGORY = 400_000_000_000_000_003
+"""A channel in `GUILD` that nothing can be posted to."""
+
+SECOND_CHANNEL = 400_000_000_000_000_004
+"""A second channel in `GUILD`, so a test can move the notification channel within it."""
+
 
 def headers(
     actor: int | str | None = POOL_MANAGER, *, token: str | None = TOKEN
@@ -105,6 +114,9 @@ def discord() -> FakeDiscord:
     fake.add_guild(GUILD)
     fake.add_guild(OTHER_GUILD)
     fake.add_channel(CHANNEL, GUILD)
+    fake.add_channel(OTHER_CHANNEL, OTHER_GUILD)
+    fake.add_channel(CATEGORY, GUILD, postable=False)
+    fake.add_channel(SECOND_CHANNEL, GUILD)
 
     fake.add_member(MANAGEMENT_GUILD, POOL_MANAGER, role_ids=frozenset({POOL_MANAGER_ROLE}))
     fake.add_member(

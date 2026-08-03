@@ -35,7 +35,9 @@ export interface paths {
          * Me
          * @description Who the caller is, and the one thing the UI needs to know they can do.
          *
-         *     `manages_pools` is a cached Discord lookup and `is_owner` is a set membership; both
+         *     `manages_pools` is a cached Discord lookup — the same one the pool routes gate on,
+         *     through the same function, so the nav and the gate cannot disagree about who manages
+         *     pools. `is_owner` is a set membership. Both
          *     decide which navigation the SPA draws. They are conveniences, not gates: every route
          *     behind them resolves the same thing again for itself, so a stale `false` hides a link
          *     and a stale `true` produces a 403 rather than an escalation.
@@ -183,8 +185,21 @@ export interface paths {
          *
          *     One job per new listing rather than one job for the batch. The worker's unit of work
          *     is a listing fanned out across subscribing guilds (phase 3), and a batch-shaped job
-         *     would need its own retry and its own accounting against ADR 0007's breaker for no
-         *     benefit — the queue is a table, and rows are cheap.
+         *     would need its own retry — the queue is a table, and rows are cheap.
+         *
+         *     **The circuit breaker does not cover this route, and cannot.** ADR 0007's budget is
+         *     per guild per `Run`, and a `Run` is one job: `enforce_listing` is one user across many
+         *     guilds, so it spends exactly one action of `ENFORCEMENT_BURST_LIMIT` in each of them
+         *     however large the batch. A 500-entry request is 500 runs of one action, not one run of
+         *     500, and no guild ever reaches the limit or gets paused. The two fan-outs shaped the
+         *     other way — `enforce_subscription` and the sweep, many users in one guild — share a
+         *     single `Run` and do trip it.
+         *
+         *     That gap is known and accepted: pool management is a small, trusted, deliberately
+         *     granted role (ADR 0012), and the accident this rail exists to catch arrives through
+         *     subscription and sweep, which are covered. What is *not* true is that the breaker
+         *     bounds this endpoint. If pool management is ever widened, `max_length` on
+         *     :class:`~timothy_api.schemas.BulkListingCreate` is the only thing standing here.
          *
          *     Users already listed are skipped and reported, not treated as failures. Duplicates
          *     within one request collapse the same way, so pasting a list with repeats in it does
@@ -466,7 +481,7 @@ export interface paths {
         get: operations["read_notification_channel_guilds__guild_id__notification_channel_get"];
         /**
          * Set Notification Channel
-         * @description Point this guild's notifications at a channel.
+         * @description Point this guild's notifications at a channel it owns.
          */
         put: operations["set_notification_channel_guilds__guild_id__notification_channel_put"];
         post?: never;
@@ -560,6 +575,10 @@ export interface paths {
         /**
          * Read Audit Log
          * @description The most recent entries, newest first.
+         *
+         *     `action` and `q` narrow together rather than competing: the dropdown says which kind
+         *     of line, the search box says which subject, and the pair of them is how somebody
+         *     answers "when was this user banned" without reading a thousand rows.
          */
         get: operations["read_audit_log_audit_log_get"];
         put?: never;
@@ -737,8 +756,12 @@ export interface components {
          *
          *     Bounded, and not generously: a bulk listing is the operation that most deserves to be
          *     reviewed before it is sent, and every entry becomes enforcement across every
-         *     subscribing guild. ADR 0007's circuit breaker will stop the fan-out long before this
-         *     limit matters, which is the intended trade — see `ENFORCEMENT_BURST_LIMIT`.
+         *     subscribing guild.
+         *
+         *     This bound is the *only* ceiling on the route. ADR 0007's circuit breaker does not
+         *     apply — its budget is per guild per run, and one listing costs one action per guild,
+         *     so a batch of any size passes under it. See `create_listings` for why that is accepted
+         *     rather than fixed, and treat this number as load-bearing if the limit is ever raised.
          */
         BulkListingCreate: {
             /** Reason */
@@ -2388,6 +2411,8 @@ export interface operations {
                 before_id?: number | null;
                 /** @description Only entries with this exact action, e.g. `listing.create`. */
                 action?: string | null;
+                /** @description Match against the actor, the action, the target, or the detail as text. A user ID finds every line about that user whichever of those they are in. */
+                q?: string | null;
             };
             header?: never;
             path?: never;
@@ -2534,6 +2559,8 @@ export interface operations {
                 status?: components["schemas"]["JobStatus"] | null;
                 /** @description Only jobs of this kind, e.g. `enforce_guild`. */
                 kind?: string | null;
+                /** @description Match against the kind, the payload, or the last error as text. A user or guild ID finds the queued work about it. */
+                q?: string | null;
             };
             header?: never;
             path?: never;

@@ -25,6 +25,7 @@ from timothy_api.policy import Operation, PermissionContext, Requirement
 from timothy_api.settings import Settings
 from timothy_core.actors import Actor
 from timothy_core.db.models import Guild
+from timothy_core.ports.discord import DiscordPort
 
 
 def get_settings(request: Request) -> Settings:
@@ -45,6 +46,16 @@ def get_resolver(request: Request) -> PermissionResolver:
     return resolver
 
 
+def get_discord(request: Request) -> DiscordPort:
+    """The door to Discord.
+
+    Handlers reach for this only to ask Discord something the database cannot answer —
+    who owns a channel, and not who may do what, which is `Requires`' business.
+    """
+    port: DiscordPort = request.app.state.discord
+    return port
+
+
 async def get_session(
     database: Annotated[Database, Depends(get_database)],
 ) -> AsyncIterator[AsyncSession]:
@@ -61,6 +72,7 @@ async def get_session(
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 ResolverDep = Annotated[PermissionResolver, Depends(get_resolver)]
+DiscordDep = Annotated[DiscordPort, Depends(get_discord)]
 
 
 FROM_GUILD_HEADER: Final = "X-Timothy-From-Guild"

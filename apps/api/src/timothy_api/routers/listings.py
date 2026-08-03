@@ -8,8 +8,7 @@ carry out against the guilds subscribing at that moment.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
-from sqlalchemy import ColumnElement, cast, func, or_, select
-from sqlalchemy.types import String
+from sqlalchemy import func, select
 
 from timothy_api import audit, jobs
 from timothy_api.deps import Requires, SessionDep
@@ -24,6 +23,7 @@ from timothy_api.schemas import (
     ListingRead,
     Snowflake,
 )
+from timothy_api.search import MAX_QUERY, matching
 from timothy_core.actors import Actor
 from timothy_core.db.models import Listing, Pool
 
@@ -52,30 +52,10 @@ Search = Annotated[
     str | None,
     Query(
         min_length=1,
-        max_length=128,
+        max_length=MAX_QUERY,
         description="Match against the reason, or against the user ID as text.",
     ),
 ]
-
-LIKE_ESCAPE = "\\"
-
-
-def _matches(query: str) -> ColumnElement[bool]:
-    """A listing whose reason or user ID contains this text.
-
-    The user ID is compared as *text* so that a partial snowflake works: somebody
-    reading a screenshot types the six digits they can make out, not all eighteen.
-    `%` and `_` in the query are escaped, because a moderator searching for `100%` is
-    searching for a string and not writing a pattern.
-    """
-    pattern = query
-    for character in (LIKE_ESCAPE, "%", "_"):
-        pattern = pattern.replace(character, LIKE_ESCAPE + character)
-    pattern = f"%{pattern}%"
-    return or_(
-        Listing.reason.ilike(pattern, escape=LIKE_ESCAPE),
-        cast(Listing.user_id, String).like(pattern, escape=LIKE_ESCAPE),
-    )
 
 
 @router.post("/pools/{name}/listings", status_code=status.HTTP_201_CREATED)
@@ -127,12 +107,12 @@ async def list_pool_listings(
     it is not unique, and a cursor that can repeat a value can skip a row.
     """
     pool = await get_pool(session, name)
-    matching = [Listing.pool_id == pool.id]
+    narrowed = [Listing.pool_id == pool.id]
     if q is not None:
-        matching.append(_matches(q))
+        narrowed.append(matching(q, Listing.reason, Listing.user_id))
 
-    total = await session.scalar(select(func.count()).select_from(Listing).where(*matching))
-    page = select(Listing).where(*matching).order_by(Listing.id).limit(limit)
+    total = await session.scalar(select(func.count()).select_from(Listing).where(*narrowed))
+    page = select(Listing).where(*narrowed).order_by(Listing.id).limit(limit)
     if after_id is not None:
         page = page.where(Listing.id > after_id)
 
@@ -155,8 +135,21 @@ async def create_listings(
 
     One job per new listing rather than one job for the batch. The worker's unit of work
     is a listing fanned out across subscribing guilds (phase 3), and a batch-shaped job
-    would need its own retry and its own accounting against ADR 0007's breaker for no
-    benefit — the queue is a table, and rows are cheap.
+    would need its own retry — the queue is a table, and rows are cheap.
+
+    **The circuit breaker does not cover this route, and cannot.** ADR 0007's budget is
+    per guild per `Run`, and a `Run` is one job: `enforce_listing` is one user across many
+    guilds, so it spends exactly one action of `ENFORCEMENT_BURST_LIMIT` in each of them
+    however large the batch. A 500-entry request is 500 runs of one action, not one run of
+    500, and no guild ever reaches the limit or gets paused. The two fan-outs shaped the
+    other way — `enforce_subscription` and the sweep, many users in one guild — share a
+    single `Run` and do trip it.
+
+    That gap is known and accepted: pool management is a small, trusted, deliberately
+    granted role (ADR 0012), and the accident this rail exists to catch arrives through
+    subscription and sweep, which are covered. What is *not* true is that the breaker
+    bounds this endpoint. If pool management is ever widened, `max_length` on
+    :class:`~timothy_api.schemas.BulkListingCreate` is the only thing standing here.
 
     Users already listed are skipped and reported, not treated as failures. Duplicates
     within one request collapse the same way, so pasting a list with repeats in it does

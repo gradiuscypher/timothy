@@ -33,6 +33,21 @@ from timothy_core.enums import JobStatus, OutcomeStatus, SubscriptionLevel
 
 SNOWFLAKE_PATTERN = r"^\d{1,20}$"
 
+MAX_REASON = 1000
+"""How much free text a human may attach to a listing, a bulk listing or an exception.
+
+Sized from what happens downstream rather than from what SQLite would tolerate. A reason
+is copied into a `Notice` Discord will reject over
+:data:`~timothy_core.enforcement.messages.NOTICE_BODY_LIMIT` characters, truncated into a
+ban's audit reason at 512, and — for a bulk listing — repeated into every listing row,
+every audit row and every job the request creates. A thousand characters is far more than
+"raid wave, 2026-08-01" needs and comfortably clear of all three.
+"""
+
+MAX_DESCRIPTION = 1000
+"""How much prose a pool may carry. Never reaches Discord; bounded so that a field the UI
+renders cannot be made arbitrarily large."""
+
 
 def _to_snowflake(value: object) -> object:
     """Accept the string form the wire uses, and the int form tests and paths use."""
@@ -84,7 +99,7 @@ class PoolCreate(BaseModel):
     """Create a pool."""
 
     name: str = Field(min_length=1, max_length=64)
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=MAX_DESCRIPTION)
 
 
 class PoolUpdate(BaseModel):
@@ -95,7 +110,7 @@ class PoolUpdate(BaseModel):
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=64)
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=MAX_DESCRIPTION)
 
 
 class ListingRead(BaseModel):
@@ -129,7 +144,7 @@ class ListingCreate(BaseModel):
     """Add a user to a pool. An assertion, not an action — see CONTEXT.md."""
 
     user_id: Snowflake
-    reason: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=MAX_REASON)
 
 
 class ListingPage(BaseModel):
@@ -154,11 +169,15 @@ class BulkListingCreate(BaseModel):
 
     Bounded, and not generously: a bulk listing is the operation that most deserves to be
     reviewed before it is sent, and every entry becomes enforcement across every
-    subscribing guild. ADR 0007's circuit breaker will stop the fan-out long before this
-    limit matters, which is the intended trade — see `ENFORCEMENT_BURST_LIMIT`.
+    subscribing guild.
+
+    This bound is the *only* ceiling on the route. ADR 0007's circuit breaker does not
+    apply — its budget is per guild per run, and one listing costs one action per guild,
+    so a batch of any size passes under it. See `create_listings` for why that is accepted
+    rather than fixed, and treat this number as load-bearing if the limit is ever raised.
     """
 
-    reason: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=MAX_REASON)
     """One reason for the whole batch. Bulk listing is "these accounts, this raid"."""
 
     user_ids: list[Snowflake] = Field(min_length=1, max_length=500)
@@ -281,7 +300,7 @@ class ExceptionRead(BaseModel):
 class ExceptionCreate(BaseModel):
     """Vouch for a user in a guild. Guild-wide, never scoped to one pool (ADR 0006)."""
 
-    reason: str | None = None
+    reason: str | None = Field(default=None, max_length=MAX_REASON)
 
 
 class NotificationChannelRead(BaseModel):
