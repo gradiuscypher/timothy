@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from timothy_api.audit import AuditAction
 from timothy_api.settings import Settings
+from timothy_core.enforcement.messages import BAN_TITLE
 from timothy_core.enums import OutcomeStatus
 from timothy_core.ports.discord import ForbiddenError, NotFoundError
 from timothy_core.ports.fake import FakeDiscord
@@ -253,8 +254,8 @@ def test_a_warn_subscription_posts_and_never_bans(
 
     assert not discord.is_banned(GUILD, LISTED_USER)
     assert len(discord.messages) == 1
-    assert str(LISTED_USER) in discord.messages[0].content
-    assert "raiding" in discord.messages[0].content
+    assert str(LISTED_USER) in discord.messages[0].text
+    assert "raiding" in discord.messages[0].text
 
 
 def test_a_user_is_warned_about_once_and_never_again(
@@ -322,7 +323,8 @@ def test_a_ban_level_pool_silences_a_warn_level_one(
     enforcement.drain()
 
     assert discord.is_banned(GUILD, LISTED_USER)
-    assert discord.messages == []
+    # The ban is announced; the warn about the same user is not.
+    assert [message.notice.title for message in discord.messages] == [BAN_TITLE]
 
 
 # -- the skips ---------------------------------------------------------------

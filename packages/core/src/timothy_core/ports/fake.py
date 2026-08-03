@@ -20,6 +20,7 @@ from timothy_core.ports.discord import (
     GuildPermissions,
     Member,
     NotFoundError,
+    Notice,
     RateLimitedError,
 )
 
@@ -35,15 +36,20 @@ class Call:
     user_id: int | None = None
     channel_id: int | None = None
     reason: str | None = None
-    content: str | None = None
+    notice: Notice | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class PostedMessage:
-    """A message that reached a channel."""
+    """A notice that reached a channel."""
 
     channel_id: int
-    content: str
+    notice: Notice
+
+    @property
+    def text(self) -> str:
+        """Title and body together — what a test asking "did it say X" means."""
+        return f"{self.notice.title}\n{self.notice.body}"
 
 
 @dataclass(slots=True)
@@ -191,13 +197,13 @@ class FakeDiscord:
         self._raise_if_injected("guild_permissions", guild_id, user_id)
         return guild.permissions.get(user_id, GuildPermissions.none())
 
-    async def post_message(self, *, channel_id: int, content: str) -> None:
-        """Post to a channel.
+    async def post_message(self, *, channel_id: int, notice: Notice) -> None:
+        """Post a notice to a channel.
 
         Raises:
             NotFoundError: if the channel is unknown.
         """
-        self.calls.append(Call("post_message", channel_id=channel_id, content=content))
+        self.calls.append(Call("post_message", channel_id=channel_id, notice=notice))
         self._spend_call()
         if channel_id not in self.channels:
             msg = f"no channel {channel_id}"
@@ -205,7 +211,7 @@ class FakeDiscord:
         injected = self._channel_failures.get(channel_id)
         if injected is not None:
             raise injected
-        self.messages.append(PostedMessage(channel_id=channel_id, content=content))
+        self.messages.append(PostedMessage(channel_id=channel_id, notice=notice))
 
     # -- assertions helpers --------------------------------------------------
 

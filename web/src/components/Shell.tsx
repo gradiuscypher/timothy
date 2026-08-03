@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { LOGIN_URL, type SignedIn } from "@/api/client";
 import { useLogout, useSignedIn } from "@/api/hooks";
 import { cn } from "@/components/cn";
+import { ContextNav } from "@/components/ContextNav";
 import {
   FAMILIES,
   FAMILY_LABELS,
@@ -14,6 +15,7 @@ import {
   type Mode,
 } from "@/components/theme";
 import { Button, ChoiceList, ErrorNote, Loading } from "@/components/ui";
+import type { Dispatch, FocusEvent, SetStateAction } from "react";
 
 /**
  * The frame every screen is drawn in, and the gate in front of it.
@@ -29,6 +31,7 @@ import { Button, ChoiceList, ErrorNote, Loading } from "@/components/ui";
  */
 export function Shell() {
   const session = useSignedIn();
+  const layout = useLayout();
 
   if (session.isPending) return <Loading what="your session" />;
   if (session.isError) {
@@ -42,12 +45,51 @@ export function Shell() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <TopBar me={session.data} />
-      <main className="mx-auto w-full max-w-6xl grow px-4 py-6 sm:px-6">
-        <Outlet />
+      <TopBar me={session.data} layout={layout} />
+      <main className={cn(CONTAINERS[layout], "grow py-6", layout === "rail" && "flex gap-6")}>
+        {layout === "rail" ? <ContextNav /> : null}
+        {/* `min-w-0` because a flex item defaults to refusing to shrink below its
+            content, and this one contains tables of unbreakable user IDs. */}
+        <div className={cn("min-w-0", layout === "rail" ? "mx-auto w-full max-w-6xl" : "w-full")}>
+          <Outlet />
+        </div>
       </main>
     </div>
   );
+}
+
+/**
+ * How wide the page under this route is allowed to be.
+ *
+ * Three shapes, because the screens want three different things from the horizontal
+ * space and one measure cannot serve all of them:
+ *
+ * - `default` — a column at a readable measure, centred. Forms and short lists.
+ * - `rail` — the same column, unchanged, with `ContextNav` in the margin beside it. The
+ *   page is not narrowed to make room; the rail only appears where there is room going
+ *   spare. Detail screens, where the next thing you want is usually a sibling.
+ * - `wide` — everything there is. The audit log and the job queue are five and six
+ *   columns of timestamps, IDs, JSON payloads and error text, and every pixel taken off
+ *   them is a wrapped line or a horizontal scrollbar.
+ *
+ * Each route says which it wants in `router.tsx`, next to its path, rather than this
+ * matching on pathnames it would then have to be kept in step with.
+ */
+export type Layout = "default" | "rail" | "wide";
+
+const CONTAINERS: Record<Layout, string> = {
+  default: "mx-auto w-full max-w-6xl px-4 sm:px-6",
+  // Wide enough for a page and a rail, capped so the header does not stretch to the far
+  // corners of a very large display while the page it belongs to stays centred.
+  rail: "mx-auto w-full max-w-[100rem] px-4 sm:px-6",
+  wide: "w-full px-4 sm:px-6",
+};
+
+function useLayout(): Layout {
+  return useRouterState({
+    // The deepest match is the route actually being rendered; the root is the shell.
+    select: (state) => state.matches.at(-1)?.staticData.layout ?? "default",
+  });
 }
 
 /**
@@ -135,25 +177,17 @@ function ThemeChoices({
 }
 
 /**
- * The settings menu, and the three ways out of it.
+ * The three ways out of a popover, shared by the two of them in this bar.
  *
  * A popover has to be dismissible by something other than the button that opened it, or
- * it is a trap for anybody who opened it by accident: Escape, a click anywhere else, and
- * focus leaving the panel all close it. `pointerdown` rather than `click` so a press that
+ * it is a trap for anybody who opened it by accident: Escape, a press anywhere else, and
+ * tabbing out of the panel all close it. `pointerdown` rather than `click` so a press that
  * starts outside closes immediately instead of waiting to see where it ends.
  *
- * Nothing here is destructive and nothing is asynchronous, so the panel stays a plain
- * region rather than a modal — the page behind it is still readable, and the theme
- * changing underneath the open menu is the point.
- *
- * This lives in the top bar, which the shell only renders behind a session. Somebody
- * signed out sees the login screen in whatever theme they last chose but cannot change it
- * there — a control on a page you visit once, to change something you cannot yet see the
- * effect of, is not worth the second copy.
+ * Returns what the wrapping element needs: the ref the outside-press test is made
+ * against, and the blur handler for the tab-out case.
  */
-function SettingsMenu() {
-  const theme = useTheme();
-  const [open, setOpen] = useState(false);
+function useDismiss(open: boolean, setOpen: Dispatch<SetStateAction<boolean>>) {
   const container = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -170,16 +204,47 @@ function SettingsMenu() {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [open, setOpen]);
+
+  const onBlur = (event: FocusEvent<HTMLDivElement>) => {
+    // `relatedTarget` is what focus went *to*, and it is null far more often than it
+    // looks. Pressing the pointer on anything unfocusable — which is what every one of
+    // the theme choices is, a label around a visually hidden radio — takes focus off the
+    // button and gives it to nobody, and that arrives here as a blur to null before the
+    // click has reached the radio. Closing on it unmounted the panel mid-press, so the
+    // theme could not be changed with a mouse at all.
+    //
+    // The case this handler is actually for is tabbing out of the panel, and that always
+    // names where focus landed. A blur to nowhere is left to the pointerdown listener
+    // above, which can see where the press was and keeps the panel open when it was
+    // inside.
+    if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) {
+      setOpen(false);
+    }
+  };
+
+  return { container, onBlur };
+}
+
+/**
+ * The settings menu.
+ *
+ * Nothing here is destructive and nothing is asynchronous, so the panel stays a plain
+ * region rather than a modal — the page behind it is still readable, and the theme
+ * changing underneath the open menu is the point.
+ *
+ * This lives in the top bar, which the shell only renders behind a session. Somebody
+ * signed out sees the login screen in whatever theme they last chose but cannot change it
+ * there — a control on a page you visit once, to change something you cannot yet see the
+ * effect of, is not worth the second copy.
+ */
+function SettingsMenu() {
+  const theme = useTheme();
+  const [open, setOpen] = useState(false);
+  const { container, onBlur } = useDismiss(open, setOpen);
 
   return (
-    <div
-      ref={container}
-      className="relative"
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
-      }}
-    >
+    <div ref={container} className="relative" onBlur={onBlur}>
       <Button
         size="sm"
         variant="ghost"
@@ -224,7 +289,101 @@ function GearIcon() {
   );
 }
 
-function TopBar({ me }: { me: SignedIn }) {
+/** One entry in the top bar, as a link or as the button that opens a menu. */
+const NAV_ITEM = "rounded-md px-2.5 py-1.5 text-sm";
+const NAV_ACTIVE = "bg-surface-2 font-medium";
+const NAV_IDLE = "text-surface-muted hover:bg-surface-2 hover:text-surface-ink";
+
+/**
+ * Operations, and the pages under it.
+ *
+ * The job queue was a card at the bottom of the overview, which is the wrong place for
+ * it twice over: it is filtered and paged, so it is somewhere you *stay*, and it is the
+ * widest table in the app underneath a screen that is a grid of small tiles. It is its
+ * own page now, and this is what makes it reachable without a second top-level entry —
+ * the overview is still what "Operations" means, and Jobs sits under it.
+ *
+ * A button rather than a link that also opens on hover: hover menus cannot be reached
+ * from a keyboard or a touchscreen without a second mechanism, and the second mechanism
+ * is this one anyway.
+ *
+ * What drops down is a group of ordinary links, not a `role="menu"` — that role promises
+ * arrow-key navigation and a roving tabstop, and two links you can Tab through do not
+ * need either. Same shape as `SettingsMenu`, which is the other thing in this bar that
+ * opens.
+ */
+function OpsMenu({ path }: { path: string }) {
+  const [open, setOpen] = useState(false);
+  const { container, onBlur } = useDismiss(open, setOpen);
+
+  const items = [
+    { to: "/ops", label: "Overview" },
+    { to: "/ops/jobs", label: "Jobs" },
+  ] as const;
+
+  return (
+    <div ref={container} className="relative" onBlur={onBlur}>
+      <button
+        type="button"
+        aria-haspopup="true"
+        aria-expanded={open}
+        onClick={() => setOpen((was) => !was)}
+        className={cn(
+          NAV_ITEM,
+          "inline-flex items-center gap-1",
+          path.startsWith("/ops") ? NAV_ACTIVE : NAV_IDLE,
+        )}
+      >
+        Operations
+        <CaretIcon />
+      </button>
+      {open ? (
+        <div
+          role="group"
+          aria-label="Operations"
+          className={cn(
+            "absolute left-0 z-40 mt-1 w-40 rounded-lg border border-surface-border",
+            "bg-surface-1 p-1 shadow-lg",
+          )}
+        >
+          {items.map((item) => {
+            const current = path === item.to;
+            return (
+              <Link
+                key={item.to}
+                to={item.to}
+                aria-current={current ? "page" : undefined}
+                onClick={() => setOpen(false)}
+                className={cn("block", NAV_ITEM, current ? NAV_ACTIVE : NAV_IDLE)}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CaretIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="h-3 w-3"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function TopBar({ me, layout }: { me: SignedIn; layout: Layout }) {
   const logout = useLogout();
   const path = useRouterState({ select: (state) => state.location.pathname });
 
@@ -234,14 +393,13 @@ function TopBar({ me }: { me: SignedIn }) {
     { to: "/guilds", label: "Servers", exact: false },
     { to: "/users", label: "Look up a user", exact: false },
     ...(me.manages_pools ? [{ to: "/audit", label: "Audit log", exact: false }] : []),
-    // Drawn from `is_owner`, not `manages_pools`: running the deployment and owning the
-    // pools are different jobs, and the operations view belongs to the first (ADR 0011).
-    ...(me.is_owner ? [{ to: "/ops", label: "Operations", exact: false }] : []),
   ];
 
   return (
     <header className="border-b border-surface-border bg-surface-1">
-      <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-1 gap-y-2 px-4 py-2 sm:px-6">
+      {/* The bar is measured with the page beneath it, so a wide page does not sit under
+          a navigation stopping short of it. */}
+      <div className={cn(CONTAINERS[layout], "flex flex-wrap items-center gap-x-1 gap-y-2 py-2")}>
         <span className="mr-3 font-semibold tracking-tight">Timothy</span>
         <nav className="flex flex-wrap items-center gap-1">
           {links.map((link) => {
@@ -250,17 +408,16 @@ function TopBar({ me }: { me: SignedIn }) {
               <Link
                 key={link.to}
                 to={link.to}
-                className={cn(
-                  "rounded-md px-2.5 py-1.5 text-sm",
-                  active
-                    ? "bg-surface-2 font-medium"
-                    : "text-surface-muted hover:bg-surface-2 hover:text-surface-ink",
-                )}
+                className={cn(NAV_ITEM, active ? NAV_ACTIVE : NAV_IDLE)}
               >
                 {link.label}
               </Link>
             );
           })}
+          {/* Drawn from `is_owner`, not `manages_pools`: running the deployment and
+              owning the pools are different jobs, and the operations views belong to the
+              first (ADR 0011). */}
+          {me.is_owner ? <OpsMenu path={path} /> : null}
         </nav>
         <div className="ml-auto flex items-center gap-2 text-sm">
           <span className="text-surface-muted">{me.username ?? me.actor}</span>

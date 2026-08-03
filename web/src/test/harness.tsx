@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render, type RenderResult } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse, type JsonBodyType, type RequestHandler } from "msw";
@@ -7,6 +8,7 @@ import type { ReactElement } from "react";
 import { afterAll, afterEach, beforeAll } from "vitest";
 
 import { ApiError } from "@/api/client";
+import { makeRouter } from "@/router";
 
 /**
  * The API, intercepted at the network rather than at the module.
@@ -86,6 +88,20 @@ export function renderWithQuery(element: ReactElement): RenderResult & {
     user: userEvent.setup(),
     ...render(<QueryClientProvider client={client}>{element}</QueryClientProvider>),
   };
+}
+
+/**
+ * The whole app, mounted at `path` on a history that is not the browser's.
+ *
+ * Screens that link anywhere need a router above them — `Link` reads one out of context
+ * and cannot render without it — so anything with navigation in it is rendered through
+ * here rather than on its own. What that costs is a session handler; what it buys is
+ * that the route, the shell around it and the page are all the real ones.
+ */
+export function renderApp(path = "/"): ReturnType<typeof renderWithQuery> {
+  const router = makeRouter();
+  router.history = createMemoryHistory({ initialEntries: [path] });
+  return renderWithQuery(<RouterProvider router={router} />);
 }
 
 export { ApiError };

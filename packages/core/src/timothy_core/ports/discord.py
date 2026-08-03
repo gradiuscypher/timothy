@@ -65,6 +65,21 @@ class GuildPermissions:
         return cls(value=ADMINISTRATOR)
 
 
+@dataclass(frozen=True, slots=True)
+class Notice:
+    """One thing Timothy posts to a guild's notification channel.
+
+    Everything Timothy says in a channel is an embed — a title, a body and a colour a
+    moderator can read at a glance without reading the words. The colour is a plain
+    integer rather than a `discord.Colour` because the domain decides what a message
+    *means*, and the adapter is the only place that knows how Discord spells it.
+    """
+
+    title: str
+    body: str
+    colour: int
+
+
 class DiscordError(Exception):
     """Something went wrong at Discord's end."""
 
@@ -151,8 +166,8 @@ class DiscordPort(Protocol):
         """
         ...
 
-    async def post_message(self, *, channel_id: int, content: str) -> None:
-        """Post to a channel — how a warn-level match reaches a guild.
+    async def post_message(self, *, channel_id: int, notice: Notice) -> None:
+        """Post a notice to a channel — how a warn-level match reaches a guild.
 
         Raises:
             NotFoundError: the channel is gone.

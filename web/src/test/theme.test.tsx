@@ -1,5 +1,5 @@
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { UserEvent } from "@testing-library/user-event";
 
@@ -25,6 +25,28 @@ async function openSettings(user: UserEvent) {
 /** Wait for the shell to be on screen without touching the settings menu. */
 function shellRendered() {
   return screen.findByRole("button", { name: "Settings" });
+}
+
+/**
+ * Choose an option the way a browser does, rather than the way `user-event` does.
+ *
+ * `user-event` clicks a label by moving focus straight onto its control, so the settings
+ * button's blur always names where focus went. A browser does not: pressing on a label —
+ * which is not focusable, and whose radio is visually hidden — takes focus off the button
+ * and gives it to nobody, so `relatedTarget` is null, and that arrives *before* the click.
+ * That gap is the whole of the regression this file now guards, and no amount of
+ * `user-event` clicking can see it.
+ */
+function pressWithMouse(option: HTMLElement) {
+  const label = option.closest("label");
+  if (!label) throw new Error("a choice has to be pressable by its label");
+  const focused = document.activeElement;
+
+  fireEvent.pointerDown(label);
+  if (focused instanceof HTMLElement) fireEvent.focusOut(focused, { relatedTarget: null });
+  // jsdom forwards a click on a label to the control it names, which is the half of this
+  // that a browser also does.
+  fireEvent.click(label);
 }
 
 /** What `<html>` is actually carrying, which is the only thing the stylesheet reads. */
@@ -190,5 +212,73 @@ describe("the settings menu", () => {
     await user.click(screen.getByRole("link", { name: "Home" }));
 
     expect(screen.queryByRole("group", { name: "Settings" })).not.toBeInTheDocument();
+  });
+
+  it("stays open while a choice inside it is being pressed", async () => {
+    // The regression: a press on a label takes focus off the settings button and gives it
+    // to nothing, and closing on that unmounted the panel before the click arrived.
+    const { user } = renderApp();
+    await openSettings(user);
+
+    fireEvent.pointerDown(screen.getByRole("radio", { name: "Industrial" }).closest("label")!);
+    fireEvent.focusOut(document.activeElement!, { relatedTarget: null });
+
+    expect(screen.getByRole("group", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  it("closes when focus is taken out of the panel by the keyboard", async () => {
+    // The case the blur handler is for, and the one that has to survive the fix above:
+    // tabbing away names where focus went, so the panel can tell it has been left.
+    const { user } = renderApp();
+    await openSettings(user);
+
+    fireEvent.focusOut(document.activeElement!, {
+      relatedTarget: screen.getByRole("link", { name: "Home" }),
+    });
+
+    expect(screen.queryByRole("group", { name: "Settings" })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The same choices, made with a mouse rather than with `user-event`'s idealised clicking.
+ *
+ * Every assertion here has a counterpart above that passed throughout the whole time the
+ * menu was unusable in a browser. The difference is `pressWithMouse`, and it is the only
+ * thing standing between this suite and shipping a settings menu nobody can use again.
+ */
+describe("choosing a theme with a mouse", () => {
+  it("applies a family, and leaves the menu open to show it", async () => {
+    const { user } = renderApp();
+    await openSettings(user);
+
+    pressWithMouse(screen.getByRole("radio", { name: "Industrial" }));
+
+    expect(stamped().family).toBe("industrial");
+    expect(screen.getByRole("group", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  it("applies a mode", async () => {
+    const { user } = renderApp();
+    await openSettings(user);
+
+    pressWithMouse(screen.getByRole("radio", { name: "Dark" }));
+
+    expect(stamped()).toEqual({ family: "default", mode: "dark" });
+  });
+
+  it("takes both choices in one visit to the menu", async () => {
+    // Two presses in a row is where a panel that closes on the first one shows up as
+    // "the theme half-changed", so the second choice has to be reachable without
+    // re-opening anything.
+    const { user } = renderApp();
+    await openSettings(user);
+
+    pressWithMouse(screen.getByRole("radio", { name: "Industrial" }));
+    pressWithMouse(screen.getByRole("radio", { name: "Dark" }));
+
+    expect(stamped()).toEqual({ family: "industrial", mode: "dark" });
+    expect(localStorage.getItem(FAMILY_KEY)).toBe("industrial");
+    expect(localStorage.getItem(MODE_KEY)).toBe("dark");
   });
 });

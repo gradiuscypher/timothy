@@ -1,12 +1,8 @@
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
-import type { ActivityPoint, JobStatus, OpsOverview } from "@/api/client";
-import {
-  useOpsActivity,
-  useOpsFailures,
-  useOpsJobs,
-  useOpsOverview,
-} from "@/api/hooks";
+import type { ActivityPoint, OpsOverview } from "@/api/client";
+import { useOpsActivity, useOpsFailures, useOpsOverview } from "@/api/hooks";
 import {
   Badge,
   Card,
@@ -33,6 +29,10 @@ import {
  * No charting library. The activity view is a table of counts per day, which is what
  * anybody actually reads off a chart of this shape, and a bar drawn in CSS carries the
  * comparison without 40kB of JavaScript.
+ *
+ * Everything here is a summary. The queue *depth* is a number on this page; the queue
+ * itself is `Jobs`, one page along, because reading it means filtering rather than
+ * glancing.
  */
 
 const WINDOWS = [
@@ -79,7 +79,6 @@ export function Ops() {
             <Failures />
           </div>
           <Activity days={days} />
-          <Jobs />
         </div>
       ) : null}
     </>
@@ -190,7 +189,15 @@ function Queue({ data }: { data: OpsOverview }) {
 
   return (
     <Card label="Queue">
-      <CardTitle>Queue</CardTitle>
+      <CardTitle
+        action={
+          <Link to="/ops/jobs" className="text-sm text-accent hover:underline">
+            Open the queue
+          </Link>
+        }
+      >
+        Queue
+      </CardTitle>
       <Table head={["", "Count"]}>
         <Row>
           <Cell>Waiting</Cell>
@@ -382,110 +389,6 @@ function Activity({ days }: { days: number }) {
       <p className="mt-3 text-xs text-surface-muted">
         Counted from the audit log, by UTC day. Days with nothing in them are left out
         rather than shown as zero.
-      </p>
-    </Card>
-  );
-}
-
-// -- the raw queue ---------------------------------------------------------------------
-
-const JOB_STATUSES: Array<[JobStatus | "", string]> = [
-  ["", "Any status"],
-  ["pending", "Waiting"],
-  ["running", "Running"],
-  ["done", "Done"],
-  ["failed", "Abandoned"],
-];
-
-const JOB_KINDS = [
-  ["", "Any kind"],
-  ["enforce_listing", "A user was listed"],
-  ["enforce_subscription", "A server subscribed"],
-  ["enforce_guild", "Sweep / catch-up"],
-  ["enforce_guild_user", "An exception was removed"],
-  ["revert_listing", "Lift bans for a listing"],
-  ["revert_pool", "Lift bans for a pool"],
-  ["revert_subscription", "Lift bans for a subscription"],
-] as const;
-
-function Jobs() {
-  const [status, setStatus] = useState<JobStatus | "">("");
-  const [kind, setKind] = useState("");
-  const jobs = useOpsJobs(status, kind);
-
-  return (
-    <Card label="Jobs">
-      <CardTitle
-        action={
-          <div className="flex gap-2">
-            <Select
-              aria-label="Filter by status"
-              value={status}
-              className="h-8 w-36"
-              onChange={(event) => setStatus(event.target.value as JobStatus | "")}
-            >
-              {JOB_STATUSES.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </Select>
-            <Select
-              aria-label="Filter by kind"
-              value={kind}
-              className="h-8 w-52"
-              onChange={(event) => setKind(event.target.value)}
-            >
-              {JOB_KINDS.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </Select>
-          </div>
-        }
-      >
-        Jobs
-      </CardTitle>
-
-      <ErrorNote error={jobs.error} />
-      {jobs.isPending ? <Loading what="jobs" /> : null}
-      {jobs.data?.length === 0 ? <Empty>No jobs match.</Empty> : null}
-
-      {jobs.data?.length ? (
-        <Table head={["Kind", "Status", "Tries", "About", "Created", "Last error"]}>
-          {jobs.data.map((job) => (
-            <Row key={job.id}>
-              <Cell className="whitespace-nowrap">{job.kind}</Cell>
-              <Cell>
-                <Badge
-                  tone={
-                    job.status === "failed" ? "ban" : job.status === "done" ? "ok" : "neutral"
-                  }
-                >
-                  {job.status}
-                </Badge>
-              </Cell>
-              <Cell className="tabular-nums">{job.attempts}</Cell>
-              <Cell>
-                <code className="text-xs text-surface-muted">
-                  {JSON.stringify(job.payload)}
-                </code>
-              </Cell>
-              <Cell className="whitespace-nowrap">
-                <When iso={job.created_at} />
-              </Cell>
-              <Cell className="text-danger">{job.last_error ?? ""}</Cell>
-            </Row>
-          ))}
-        </Table>
-      ) : null}
-
-      <p className="mt-3 text-xs text-surface-muted">
-        There is deliberately no retry here. A job is only abandoned after exhausting its
-        attempts on something running it again would not fix — an unknown kind, or a
-        payload missing what its handler needs. The failures worth retrying are recorded
-        against the server instead, and the sweep picks those up on its own.
       </p>
     </Card>
   );

@@ -8,6 +8,7 @@ from timothy_core.ports.discord import (
     ForbiddenError,
     GuildPermissions,
     NotFoundError,
+    Notice,
     RateLimitedError,
 )
 from timothy_core.ports.fake import FakeDiscord
@@ -18,6 +19,7 @@ GUILD = 100
 OTHER_GUILD = 200
 CHANNEL = 300
 USER = 400
+NOTICE = Notice(title="Heads up", body="someone is listed", colour=0xFEE75C)
 
 
 def test_the_fake_satisfies_the_port() -> None:
@@ -86,12 +88,12 @@ async def test_permissions_resolve_and_default_closed(discord: FakeDiscord) -> N
 
 
 async def test_posting_needs_a_channel_that_exists(discord: FakeDiscord) -> None:
-    await discord.post_message(channel_id=CHANNEL, content="heads up")
+    await discord.post_message(channel_id=CHANNEL, notice=NOTICE)
 
-    assert [message.content for message in discord.messages] == ["heads up"]
+    assert [message.notice for message in discord.messages] == [NOTICE]
 
     with pytest.raises(NotFoundError):
-        await discord.post_message(channel_id=999, content="nowhere")
+        await discord.post_message(channel_id=999, notice=NOTICE)
 
 
 async def test_one_ban_can_fail_while_the_rest_of_the_fan_out_lands(
@@ -158,7 +160,7 @@ async def test_a_failed_post_never_reaches_the_channel(discord: FakeDiscord) -> 
     discord.fail_message(CHANNEL, ForbiddenError("cannot post here"))
 
     with pytest.raises(ForbiddenError):
-        await discord.post_message(channel_id=CHANNEL, content="heads up")
+        await discord.post_message(channel_id=CHANNEL, notice=NOTICE)
 
     assert discord.messages == []
     assert len(discord.calls_of("post_message")) == 1

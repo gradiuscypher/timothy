@@ -2,9 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 
-import { Ops } from "@/routes/Ops";
-
-import { apiUrl, get, mockApi, renderWithQuery, server } from "./harness";
+import { OWNER, apiUrl, get, mockApi, renderApp, server } from "./harness";
 
 mockApi();
 
@@ -37,14 +35,24 @@ const OVERVIEW = {
   last_activity_at: "2026-08-02T12:00:00Z",
 };
 
+/**
+ * The operations screens are mounted through the router, because they link to each other
+ * — the overview points at the queue — and a `Link` without a router above it throws.
+ */
 function opsScreen(overview: Record<string, unknown> = {}, extra: unknown[] = []) {
   server.use(
+    get("/auth/me", OWNER),
     get("/ops/overview", { ...OVERVIEW, ...overview } as never),
     get("/ops/activity", (extra[0] ?? []) as never),
     get("/ops/failures", (extra[1] ?? []) as never),
-    get("/ops/jobs", (extra[2] ?? []) as never),
   );
-  return renderWithQuery(<Ops />);
+  return renderApp("/ops");
+}
+
+/** The queue is its own page, and asks for nothing but the queue. */
+function jobsScreen(jobs: unknown[] = []) {
+  server.use(get("/auth/me", OWNER), get("/ops/jobs", jobs as never));
+  return renderApp("/ops/jobs");
 }
 
 describe("the dry-run banner", () => {
@@ -251,21 +259,17 @@ describe("activity", () => {
 
 describe("the job list", () => {
   it("shows an abandoned job with the reason it gave up", async () => {
-    opsScreen({}, [
-      [],
-      [],
-      [
-        {
-          id: 7,
-          kind: "enforce_listing",
-          payload: { listing_id: 3 },
-          run_after: "2026-08-02T00:00:00Z",
-          attempts: 5,
-          status: "failed",
-          last_error: "no such listing: 3",
-          created_at: "2026-08-01T00:00:00Z",
-        },
-      ],
+    jobsScreen([
+      {
+        id: 7,
+        kind: "enforce_listing",
+        payload: { listing_id: 3 },
+        run_after: "2026-08-02T00:00:00Z",
+        attempts: 5,
+        status: "failed",
+        last_error: "no such listing: 3",
+        created_at: "2026-08-01T00:00:00Z",
+      },
     ]);
 
     const card = await screen.findByRole("region", { name: "Jobs" });
@@ -276,7 +280,7 @@ describe("the job list", () => {
   it("explains why there is no retry button", async () => {
     // Retrying an abandoned job reliably does nothing — the failures worth retrying are
     // recorded against the server and picked up by the sweep.
-    opsScreen();
+    jobsScreen();
 
     const card = await screen.findByRole("region", { name: "Jobs" });
     expect(within(card).getByText(/deliberately no retry here/)).toBeInTheDocument();
@@ -286,11 +290,11 @@ describe("the job list", () => {
   });
 
   it("filters at the backend rather than in the table", async () => {
-    const { user } = opsScreen();
+    const { user } = jobsScreen();
     await screen.findByLabelText("Filter by status");
 
     // Registered after the screen is up: `server.use` prepends, so this has to come
-    // second to win over the one `opsScreen` installed.
+    // second to win over the one `jobsScreen` installed.
     const asked: Array<string | null> = [];
     server.use(
       http.get(apiUrl("/ops/jobs"), ({ request }) => {

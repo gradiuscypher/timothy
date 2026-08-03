@@ -24,8 +24,21 @@ from timothy_core.ports.discord import (
     GuildPermissions,
     Member,
     NotFoundError,
+    Notice,
     RateLimitedError,
 )
+
+
+def to_embed(notice: Notice) -> discord.Embed:
+    """Render a domain notice as the embed a channel actually receives.
+
+    The one place a colour the domain chose becomes a colour Discord understands.
+    """
+    return discord.Embed(
+        title=notice.title,
+        description=notice.body,
+        colour=discord.Colour(notice.colour),
+    )
 
 
 def translate(error: Exception) -> DiscordError:
@@ -186,11 +199,11 @@ class DiscordAdapter:
             raise translate(error) from error
         return GuildPermissions(value=member.guild_permissions.value)
 
-    async def post_message(self, *, channel_id: int, content: str) -> None:
-        """Post to a channel, without spending a call to look it up first."""
+    async def post_message(self, *, channel_id: int, notice: Notice) -> None:
+        """Post a notice to a channel, without spending a call to look it up first."""
         client = await self._ready()
         channel = client.get_partial_messageable(channel_id)
         try:
-            await channel.send(content)
+            await channel.send(embed=to_embed(notice))
         except Exception as error:
             raise translate(error) from error

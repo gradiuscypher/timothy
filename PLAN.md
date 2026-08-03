@@ -167,7 +167,8 @@ whether by joining or by a sweep — Timothy posts once to the notification chan
 records a `warned` outcome, which prevents it ever warning about that user and pool again.
 
 The copy has to make the counterfactual obvious: nothing happened, but something would
-have.
+have. It arrives as an embed titled "Heads up — no action taken", coloured yellow — a ban
+notice is red, and the colour is the part a moderator reads before the words.
 
 > **Heads up — no action taken**
 > <@{user}> is listed in **{pool}**, which you're subscribed to at **warn** level.

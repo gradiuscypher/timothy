@@ -1,18 +1,11 @@
-import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { makeRouter } from "@/router";
-
-import { MEMBER, OWNER, SIGNED_IN, get, mockApi, renderWithQuery, server } from "./harness";
+import { MEMBER, OWNER, SIGNED_IN, get, mockApi, renderApp, server } from "./harness";
 
 mockApi();
 
-function renderApp(path = "/") {
-  const router = makeRouter();
-  router.history = createMemoryHistory({ initialEntries: [path] });
-  return renderWithQuery(<RouterProvider router={router} />);
-}
+const GUILD = "100000000000000002";
 
 describe("the shell", () => {
   it("asks an unauthenticated browser to sign in", async () => {
@@ -74,7 +67,7 @@ describe("the shell", () => {
     renderApp();
 
     await screen.findByRole("link", { name: "Pools" });
-    expect(screen.queryByRole("link", { name: "Operations" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Operations/ })).not.toBeInTheDocument();
   });
 
   it("offers it to whoever runs the deployment", async () => {
@@ -82,9 +75,37 @@ describe("the shell", () => {
 
     renderApp();
 
-    expect(await screen.findByRole("link", { name: "Operations" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Operations/ })).toBeInTheDocument();
     // Owning the deployment is not owning the pools, and the nav says so both ways.
     expect(screen.queryByRole("link", { name: "Pools" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the queue under Operations rather than beside it", async () => {
+    // Jobs is an operator's page and belongs to the same permission; a second top-level
+    // entry for it would say otherwise.
+    server.use(get("/auth/me", OWNER), get("/guilds", []), get("/ops/jobs", []));
+
+    const { user } = renderApp();
+    await user.click(await screen.findByRole("button", { name: /Operations/ }));
+
+    const menu = screen.getByRole("group", { name: "Operations" });
+    expect(within(menu).getByRole("link", { name: "Overview" })).toBeInTheDocument();
+
+    await user.click(within(menu).getByRole("link", { name: "Jobs" }));
+
+    expect(await screen.findByRole("heading", { name: "Jobs" })).toBeInTheDocument();
+  });
+
+  it("closes the menu on Escape", async () => {
+    // A popover that only its own button can dismiss is a trap for anyone who opened it
+    // by accident.
+    server.use(get("/auth/me", OWNER), get("/guilds", []));
+
+    const { user } = renderApp();
+    await user.click(await screen.findByRole("button", { name: /Operations/ }));
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("group", { name: "Operations" })).not.toBeInTheDocument();
   });
 
   it("hides them from somebody who does not", async () => {
@@ -105,5 +126,82 @@ describe("the shell", () => {
     renderApp("/guilds");
 
     expect(await screen.findByText(/sign out and back in/)).toBeInTheDocument();
+  });
+
+  it("puts the other pools and servers beside a server", async () => {
+    // The rail is a shortcut, so what matters is that it names the siblings and marks
+    // where the reader already is. Whether it is *visible* is a media query — see
+    // `--breakpoint-rail` — and no test in jsdom can see one.
+    server.use(
+      get("/auth/me", SIGNED_IN),
+      get("/pools", [
+        {
+          id: 1,
+          name: "global",
+          description: null,
+          created_by: "system",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ]),
+      get("/guilds", [
+        { guild_id: GUILD, name: "Neon Atrium", joined_at: "2026-01-01T00:00:00Z", enforcement_paused: false },
+        { guild_id: "100000000000000009", name: "Somewhere Else", joined_at: "2026-01-01T00:00:00Z", enforcement_paused: false },
+      ]),
+      get(`/guilds/${GUILD}`, {
+        guild_id: GUILD,
+        name: "Neon Atrium",
+        joined_at: "2026-01-01T00:00:00Z",
+        enforcement_paused: false,
+      }),
+      get(`/guilds/${GUILD}/subscriptions`, []),
+      get(`/guilds/${GUILD}/exceptions`, []),
+      get(`/guilds/${GUILD}/notification-channel`, { detail: "no such channel" }, 404),
+      get(`/guilds/${GUILD}/enforcement`, []),
+    );
+
+    renderApp(`/guilds/${GUILD}`);
+
+    const servers = await screen.findByRole("navigation", { name: "Servers" });
+    expect(within(servers).getByRole("link", { name: "Somewhere Else" })).toBeInTheDocument();
+    expect(within(servers).getByRole("link", { name: "Neon Atrium" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    const pools = screen.getByRole("navigation", { name: "Pools" });
+    expect(within(pools).getByRole("link", { name: "global" })).toBeInTheDocument();
+  });
+
+  it("leaves the pools out of the rail for somebody who has none", async () => {
+    // `/pools` is 403 for a member, so a rail section for it would be a heading over an
+    // error. The page's own subscribe form still asks — that is its business, and it
+    // shows the refusal where the refusal matters.
+    server.use(
+      get("/auth/me", MEMBER),
+      get("/pools", { detail: "not a pool manager" }, 403),
+      get("/guilds", [
+        {
+          guild_id: GUILD,
+          name: "Neon Atrium",
+          joined_at: "2026-01-01T00:00:00Z",
+          enforcement_paused: false,
+        },
+      ]),
+      get(`/guilds/${GUILD}`, {
+        guild_id: GUILD,
+        name: "Neon Atrium",
+        joined_at: "2026-01-01T00:00:00Z",
+        enforcement_paused: false,
+      }),
+      get(`/guilds/${GUILD}/subscriptions`, []),
+      get(`/guilds/${GUILD}/exceptions`, []),
+      get(`/guilds/${GUILD}/notification-channel`, { detail: "no such channel" }, 404),
+      get(`/guilds/${GUILD}/enforcement`, []),
+    );
+
+    renderApp(`/guilds/${GUILD}`);
+
+    await screen.findByRole("navigation", { name: "Servers" });
+    expect(screen.queryByRole("navigation", { name: "Pools" })).not.toBeInTheDocument();
   });
 });

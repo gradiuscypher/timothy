@@ -161,7 +161,7 @@ def test_tripping_is_recorded_and_the_guild_is_told(
         if entry["action"] == AuditAction.ENFORCEMENT_BREAKER_TRIPPED.value
     )
     assert tripped["detail"]["burst_limit"] == LIMIT
-    assert any("Enforcement paused here" in message.content for message in discord.messages)
+    assert any("Enforcement paused here" in message.text for message in discord.messages)
 
 
 def test_a_guild_with_no_channel_is_still_paused(
@@ -218,7 +218,7 @@ def test_a_warn_fan_out_past_the_limit_stops_at_the_limit(
     subscribe_at_warn(crowded)
     enforcement.drain()
 
-    warnings = [message for message in discord.messages if "Heads up" in message.content]
+    warnings = [message for message in discord.messages if "Heads up" in message.text]
     assert len(warnings) == LIMIT
 
 
@@ -252,7 +252,7 @@ def test_bans_and_warnings_share_one_budget(
     subscribe_at_warn(crowded)
     enforcement.drain()
 
-    warnings = sum("Heads up" in message.content for message in discord.messages)
+    warnings = sum("Heads up" in message.text for message in discord.messages)
     bans = sum(discord.is_banned(GUILD, user_id) for user_id in CROWD)
 
     assert warnings + bans == LIMIT

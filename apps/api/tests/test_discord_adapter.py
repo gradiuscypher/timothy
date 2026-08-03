@@ -22,6 +22,7 @@ from timothy_core.ports.discord import (
     ForbiddenError,
     GuildPermissions,
     NotFoundError,
+    Notice,
     RateLimitedError,
 )
 
@@ -29,6 +30,7 @@ GUILD = 1
 USER = 2
 CHANNEL = 3
 ADMINISTRATOR = 1 << 3
+NOTICE = Notice(title="Heads up", body="someone is listed", colour=0xFEE75C)
 
 
 def response(status: int, *, retry_after: str | None = None) -> Any:  # noqa: ANN401
@@ -126,12 +128,12 @@ class StubGuild:
 class StubChannel:
     def __init__(self, fails: Exception | None = None) -> None:
         self.fails = fails
-        self.sent: list[str] = []
+        self.sent: list[discord.Embed] = []
 
-    async def send(self, content: str) -> None:
+    async def send(self, *, embed: discord.Embed) -> None:
         if self.fails is not None:
             raise self.fails
-        self.sent.append(content)
+        self.sent.append(embed)
 
 
 class StubClient:
@@ -326,9 +328,12 @@ async def test_a_failed_permission_lookup_is_not_a_denial() -> None:
 async def test_a_message_is_posted_without_fetching_the_channel_first() -> None:
     client = StubClient()
 
-    await adapter(client).post_message(channel_id=CHANNEL, content="heads up")
+    await adapter(client).post_message(channel_id=CHANNEL, notice=NOTICE)
 
-    assert client.channel.sent == ["heads up"]
+    [embed] = client.channel.sent
+    assert embed.title == "Heads up"
+    assert embed.description == "someone is listed"
+    assert embed.colour == discord.Colour(0xFEE75C)
 
 
 @pytest.mark.anyio
@@ -336,7 +341,7 @@ async def test_a_channel_that_refuses_is_forbidden() -> None:
     client = StubClient(channel=StubChannel(discord.Forbidden(response(403), "no")))
 
     with pytest.raises(ForbiddenError):
-        await adapter(client).post_message(channel_id=CHANNEL, content="heads up")
+        await adapter(client).post_message(channel_id=CHANNEL, notice=NOTICE)
 
 
 @pytest.mark.anyio

@@ -45,9 +45,14 @@ from timothy_core.enforcement.decisions import (
     decide,
     subscribed_listings,
 )
-from timothy_core.enforcement.messages import ban_audit_reason, warn_message
+from timothy_core.enforcement.messages import (
+    BAN_COLOUR,
+    ban_audit_reason,
+    ban_notice,
+    warn_notice,
+)
 from timothy_core.enums import OutcomeStatus
-from timothy_core.ports.discord import DiscordError
+from timothy_core.ports.discord import DiscordError, Notice
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -60,14 +65,15 @@ if TYPE_CHECKING:
     from timothy_core.ports.discord import DiscordPort
 
 BREAKER_NOTICE = (
-    "**Enforcement paused here.**\n"
     "Timothy was about to take more than {limit} enforcement actions in this server in a "
     "single run, which is the safety limit. Nothing further has been enforced. Review the "
     "recent listings, then resume enforcement to continue."
 )
 """What a guild is told when the breaker trips. It says what stopped and what to do,
 because the guild's moderators are the ones who have to decide whether the burst was
-legitimate."""
+legitimate. Red, like a ban: something a moderator has to deal with now."""
+
+BREAKER_TITLE = "Enforcement paused here"
 
 
 @dataclass(slots=True)
@@ -199,6 +205,13 @@ class Enforcer:
                 "reason": reason,
             },
         )
+        # After the record, not before: the attribution is what makes the ban revertible,
+        # and a channel that has been deleted must not cost us that.
+        await self._notify(
+            session,
+            guild_id,
+            ban_notice(user_id=request.user_id, justifications=justifications),
+        )
 
     async def _warn(
         self,
@@ -219,7 +232,7 @@ class Enforcer:
                 await self._trip_breaker(session, run, guild_id)
                 return
 
-            content = warn_message(user_id=request.user_id, listing=listing)
+            notice = warn_notice(user_id=request.user_id, listing=listing)
             if self.settings.dry_run:
                 self._audit_dry_run(
                     session,
@@ -230,8 +243,8 @@ class Enforcer:
                 continue
             try:
                 await with_backoff(
-                    lambda content=content: self.discord.post_message(
-                        channel_id=channel.channel_id, content=content
+                    lambda notice=notice: self.discord.post_message(
+                        channel_id=channel.channel_id, notice=notice
                     ),
                     sleep=self.sleep,
                 )
@@ -340,20 +353,26 @@ class Enforcer:
             detail={"burst_limit": limit, "dry_run": self.settings.dry_run},
         )
         if not self.settings.dry_run:
-            await self._notify(session, guild_id, BREAKER_NOTICE.format(limit=limit))
+            await self._notify(
+                session,
+                guild_id,
+                Notice(
+                    title=BREAKER_TITLE,
+                    body=BREAKER_NOTICE.format(limit=limit),
+                    colour=BAN_COLOUR,
+                ),
+            )
 
-    async def _notify(self, session: AsyncSession, guild_id: int, content: str) -> None:
+    async def _notify(self, session: AsyncSession, guild_id: int, notice: Notice) -> None:
         """Tell a guild something, if it has said where. Never fails the caller."""
         channel = await session.get(NotificationChannel, guild_id)
         if channel is None:
             return
-        # The notice is a courtesy; the pause is the point. A guild that has deleted its
-        # notification channel still gets paused.
+        # The notice is a courtesy; the action it reports is the point. A guild that has
+        # deleted its notification channel still gets paused, and still gets its bans.
         with suppress(DiscordError):
             await with_backoff(
-                lambda: self.discord.post_message(
-                    channel_id=channel.channel_id, content=content
-                ),
+                lambda: self.discord.post_message(channel_id=channel.channel_id, notice=notice),
                 sleep=self.sleep,
             )
 

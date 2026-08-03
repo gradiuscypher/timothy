@@ -101,6 +101,14 @@
   --color-warn: oklch(76% 0.14 75);
   --color-ok: oklch(72% 0.13 155);
 
+  /* The width at which there is room beside a page for the pool-and-server rail, and
+     the arithmetic behind it: a `max-w-6xl` page is 1152px, the rail is 224px, the gap
+     between them 24px and the page gutters 48px. That comes to 1448, so at 1480 the rail
+     appears without taking a single pixel off the page it sits beside — which is the
+     whole point of it. Narrower than this and there is no free space to put it in, so
+     there is no rail; the top bar still reaches everything it lists. */
+  --breakpoint-rail: 1480px;
+
   /* The body face is a token so a family can change it. `--font-mono` is Tailwind's own,
      overridden here only by the industrial family — the default family keeps the system
      monospace stack it has always used for IDs. */

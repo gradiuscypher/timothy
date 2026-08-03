@@ -5,11 +5,12 @@ import {
   type AnyRoute,
 } from "@tanstack/react-router";
 
-import { Shell } from "@/components/Shell";
+import { Shell, type Layout } from "@/components/Shell";
 import { AuditLog } from "@/routes/AuditLog";
 import { GuildDetail } from "@/routes/GuildDetail";
 import { Guilds } from "@/routes/Guilds";
 import { Home } from "@/routes/Home";
+import { Jobs } from "@/routes/Jobs";
 import { Ops } from "@/routes/Ops";
 import { PoolDetail } from "@/routes/PoolDetail";
 import { Pools } from "@/routes/Pools";
@@ -19,9 +20,14 @@ import { UserLookup } from "@/routes/UserLookup";
  * Routes, declared in code rather than generated from the filesystem.
  *
  * File-based routing needs the router's own Vite plugin and a generated tree checked in
- * beside the routes it was generated from. There are eight routes. Declaring them is
+ * beside the routes it was generated from. There are nine routes. Declaring them is
  * shorter than explaining the generated file, and it keeps the build to Vite, React and
  * Tailwind.
+ *
+ * Each route also says how wide it wants to be, in `staticData.layout` — `Shell` reads it
+ * off the deepest match and shapes the page around it. It lives here rather than in the
+ * route components because it is a property of the *frame*, and because a list of paths
+ * beside a list of shapes is the only place the two can be seen to agree.
  *
  * Nothing here is a permission boundary. The navigation hides links a caller cannot use
  * and these routes are reachable by typing the URL — which is fine, because every one of
@@ -32,6 +38,13 @@ import { UserLookup } from "@/routes/UserLookup";
 const rootRoute = createRootRoute({ component: Shell });
 
 const route = <T extends AnyRoute>(config: T): T => config;
+
+/** Routes that say nothing get the centred column. */
+declare module "@tanstack/react-router" {
+  interface StaticDataRouteOption {
+    layout?: Layout;
+  }
+}
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -48,6 +61,8 @@ const poolsRoute = createRoute({
 const poolRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/pools/$name",
+  // A pool is rarely read alone — the rail puts its siblings a click away.
+  staticData: { layout: "rail" },
   component: function PoolRoute() {
     const { name } = poolRoute.useParams();
     // Remounting on a rename keeps the settings form's own state from surviving into a
@@ -65,6 +80,7 @@ const guildsRoute = createRoute({
 const guildRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/guilds/$guildId",
+  staticData: { layout: "rail" },
   component: function GuildRoute() {
     const { guildId } = guildRoute.useParams();
     return <GuildDetail key={guildId} guildId={guildId} />;
@@ -97,7 +113,16 @@ const opsRoute = createRoute({
 const auditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/audit",
+  // Five columns, one of them a JSON blob. It gets the window.
+  staticData: { layout: "wide" },
   component: AuditLog,
+});
+
+const jobsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/ops/jobs",
+  staticData: { layout: "wide" },
+  component: Jobs,
 });
 
 export const routeTree = rootRoute.addChildren([
@@ -110,6 +135,7 @@ export const routeTree = rootRoute.addChildren([
   route(userRoute),
   route(auditRoute),
   route(opsRoute),
+  route(jobsRoute),
 ]);
 
 export function makeRouter() {
