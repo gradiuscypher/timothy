@@ -2,15 +2,40 @@ name: timothy
 
 # Nothing publishes a port. Cloudflare Tunnel is the only ingress and it fronts nginx,
 # which serves the SPA and proxies /api to the backend. See PLAN.md, "Shape".
+#
+# Every service also mounts ./logs at /logs and writes a file there — see ADR 0014. The
+# daemon's own log buffer goes away with the container, and "reproduce it and I'll look"
+# is not an answer when the thing that broke was a fan-out at 3am.
 
 services:
+  logs:
+    # Makes ./logs writable by every service before any of them starts.
+    #
+    # These containers run as four different unprivileged users — timothy, nginx,
+    # nonroot — and the bind mount arrives owned by whoever owns the directory on the
+    # host. Without this, whichever service does not match that owner starts, fails to
+    # open its log file, and carries on silently to stdout, which is the exact failure
+    # the log directory exists to prevent. Running once as root and opening the
+    # directory up is the least clever fix available; the alternative is pinning a uid
+    # per service and asking whoever clones this to match it.
+    image: busybox:1.37
+    command: sh -c "mkdir -p /logs && chmod 0777 /logs"
+    user: root
+    volumes:
+      - ./logs:/logs
+    networks: [timothy]
+
   backend:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
     restart: unless-stopped
+    depends_on:
+      logs:
+        condition: service_completed_successfully
     environment:
       TIMOTHY_LOG_LEVEL: ${TIMOTHY_LOG_LEVEL:-info}
+      TIMOTHY_LOG_DIR: /logs
       TIMOTHY_DATABASE_URL: sqlite+aiosqlite:////data/timothy.db
       TIMOTHY_DISCORD_TOKEN: ${TIMOTHY_DISCORD_TOKEN:?set TIMOTHY_DISCORD_TOKEN in .env}
       TIMOTHY_INTERNAL_TOKEN: ${TIMOTHY_INTERNAL_TOKEN:?set TIMOTHY_INTERNAL_TOKEN in .env}
@@ -40,6 +65,7 @@ services:
       TIMOTHY_JOB_MAX_ATTEMPTS: ${TIMOTHY_JOB_MAX_ATTEMPTS:-5}
     volumes:
       - data:/data
+      - ./logs:/logs
     healthcheck:
       test:
         - CMD
@@ -60,6 +86,10 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      logs:
+        condition: service_completed_successfully
+    volumes:
+      - ./logs:/logs
     environment:
       TIMOTHY_DISCORD_TOKEN: ${TIMOTHY_DISCORD_TOKEN:?set TIMOTHY_DISCORD_TOKEN in .env}
       TIMOTHY_INTERNAL_TOKEN: ${TIMOTHY_INTERNAL_TOKEN:?set TIMOTHY_INTERNAL_TOKEN in .env}
@@ -70,6 +100,7 @@ services:
       TIMOTHY_GATEWAY_ENABLED: ${TIMOTHY_GATEWAY_ENABLED:-true}
       TIMOTHY_SYNC_COMMANDS: ${TIMOTHY_SYNC_COMMANDS:-true}
       TIMOTHY_LOG_LEVEL: ${TIMOTHY_LOG_LEVEL:-INFO}
+      TIMOTHY_LOG_DIR: /logs
     networks: [timothy]
 
   web:
@@ -79,7 +110,17 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      logs:
+        condition: service_completed_successfully
+    environment:
+      # How often the container asks whether nginx's two log files need rotating.
+      # `size` is the only condition in web/logrotate.conf, so this is the resolution of
+      # the check and not a schedule — lowering it does not rotate more often, it just
+      # notices sooner. Exposed mainly so the behaviour can be exercised without waiting
+      # ten minutes.
+      TIMOTHY_LOG_ROTATE_INTERVAL: ${TIMOTHY_LOG_ROTATE_INTERVAL:-600}
     volumes:
+      - ./logs:/logs
       # Berkeley Mono is licensed and is in neither the repository nor the image. Point
       # TIMOTHY_BERKELEY_MONO_DIR at an unpacked copy on this host to serve it. Left
       # unset, this mounts the empty tracked directory and the industrial theme renders
@@ -92,9 +133,23 @@ services:
     image: cloudflare/cloudflared:2026.7.3
     restart: unless-stopped
     command: tunnel --no-autoupdate run
-    depends_on: [web]
+    depends_on:
+      web:
+        condition: service_started
+      logs:
+        condition: service_completed_successfully
+    volumes:
+      - ./logs:/logs
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}
+      # `LOGDIRECTORY` rather than `LOGFILE`: cloudflared rotates the former and lets
+      # the latter grow without bound. It writes `cloudflared.log` into this directory,
+      # beside the rest. The one service here whose logs are about reachability rather
+      # than about Timothy — "the tunnel was down" is the answer to a surprising number
+      # of "the UI was broken" reports, and only answerable if the record outlasts the
+      # container.
+      TUNNEL_LOGDIRECTORY: /logs
+      TUNNEL_LOGLEVEL: ${CLOUDFLARE_TUNNEL_LOGLEVEL:-info}
     networks: [timothy]
 
 volumes:

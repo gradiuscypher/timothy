@@ -703,6 +703,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/client-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report Client Error
+         * @description Record an error the browser could not handle.
+         *
+         *     Answers 202 rather than 204: the report is written, and nothing about the client's
+         *     situation depends on what happened to it. A client that has just crashed should not
+         *     also have to handle a failure to say so.
+         *
+         *     Raises:
+         *         HTTPException: 429 once this actor's budget for the minute is spent.
+         */
+        post: operations["report_client_error_client_logs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -790,6 +817,26 @@ export interface components {
             applied: string[];
             /** Skipped */
             skipped: string[];
+        };
+        /**
+         * ClientLogEntry
+         * @description One unhandled error from the browser.
+         */
+        ClientLogEntry: {
+            /**
+             * Level
+             * @default error
+             * @enum {string}
+             */
+            level: "warning" | "error";
+            /** Message */
+            message: string;
+            /** Stack */
+            stack?: string | null;
+            /** Url */
+            url?: string | null;
+            /** Kind */
+            kind?: string | null;
         };
         /**
          * EnforcementOutcomeRead
@@ -2578,6 +2625,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_client_error_client_logs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientLogEntry"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

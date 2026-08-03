@@ -16,6 +16,7 @@ WORKDIR /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=packages/logs/pyproject.toml,target=packages/logs/pyproject.toml \
     --mount=type=bind,source=packages/core/pyproject.toml,target=packages/core/pyproject.toml \
     --mount=type=bind,source=apps/api/pyproject.toml,target=apps/api/pyproject.toml \
     --mount=type=bind,source=apps/bot/pyproject.toml,target=apps/bot/pyproject.toml \
@@ -23,6 +24,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-install-workspace --package timothy-api
 
 COPY pyproject.toml uv.lock ./
+COPY packages/logs packages/logs
 COPY packages/core packages/core
 COPY apps/bot/pyproject.toml apps/bot/pyproject.toml
 # The migration's manifest, for the same reason as above: the workspace has to

@@ -1,7 +1,20 @@
 """Process configuration, read from the environment."""
 
-from pydantic import Field, SecretStr
+from pathlib import Path
+from typing import Annotated
+
+from pydantic import BeforeValidator, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _optional_path(value: object) -> object:
+    """Read a path that an empty setting turns off rather than points at `.`."""
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+LogDir = Annotated[Path | None, BeforeValidator(_optional_path)]
 
 
 class Settings(BaseSettings):
@@ -12,6 +25,10 @@ class Settings(BaseSettings):
     discord_token: SecretStr = SecretStr("")
     api_base_url: str = "http://backend:8000"
     log_level: str = "INFO"
+
+    log_dir: LogDir = Path("/logs")
+    """Where the rotating log file goes, in the directory the backend and nginx also
+    write to. Empty turns the file off and leaves logging on stdout."""
 
     internal_token: SecretStr = SecretStr("")
     """What the bot presents to the backend on every call. The bot asserts identity —

@@ -34,3 +34,7 @@ web/openapi.json
 # Berkeley Mono is licensed, not redistributable, and is mounted at runtime rather than
 # committed. The directory and its README are tracked; the faces never are.
 web/public/fonts/berkeley/*.woff2
+
+# The shared log directory compose bind-mounts into every service (ADR 0014). Anchored:
+# an unanchored `logs/` also matches `packages/logs/`, which is source.
+/logs/

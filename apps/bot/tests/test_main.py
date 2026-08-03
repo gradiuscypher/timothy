@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -73,24 +75,44 @@ async def test_the_gateway_opens_with_the_configured_token(
     assert started == ["gateway-token"]
 
 
-def test_main_configures_logging_before_it_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_configures_logging_before_it_runs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Uvicorn's counterpart of this was the reason nothing the backend logged reached
     its container's output. The bot has no framework doing it either."""
-    levels: list[int] = []
+    calls: list[dict[str, Any]] = []
     monkeypatch.setenv("TIMOTHY_LOG_LEVEL", "debug")
-    monkeypatch.setattr(
-        __main__.logging, "basicConfig", lambda **kwargs: levels.append(kwargs["level"])
-    )
+    monkeypatch.setenv("TIMOTHY_LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(__main__.logs, "configure", lambda *_a, **kw: calls.append(kw))
     monkeypatch.setattr(__main__.asyncio, "run", lambda coroutine: coroutine.close())
 
     __main__.main()
 
-    assert levels == ["DEBUG"]
+    assert calls[0]["level"] == "debug"
+    assert calls[0]["log_dir"] == tmp_path
 
 
-def test_main_quiets_the_http_client(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_registers_its_credentials_for_redaction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR 0014: the bot holds the token discord.py puts in an `Authorization` header
+    and then quotes back in its own error messages. Nothing else in this process is in a
+    position to keep it out of the file."""
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setenv("TIMOTHY_DISCORD_TOKEN", "gateway-token-value")
+    monkeypatch.setenv("TIMOTHY_INTERNAL_TOKEN", "internal-token-value")
+    monkeypatch.setenv("TIMOTHY_LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(__main__.logs, "configure", lambda *_a, **kw: calls.append(kw))
+    monkeypatch.setattr(__main__.asyncio, "run", lambda coroutine: coroutine.close())
+
+    __main__.main()
+
+    assert set(calls[0]["secrets"]) == {"gateway-token-value", "internal-token-value"}
+
+
+def test_main_quiets_the_http_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The relay already logs a line per event, saying what the backend decided."""
-    monkeypatch.setattr(__main__.logging, "basicConfig", lambda **_kwargs: None)
+    monkeypatch.setenv("TIMOTHY_LOG_DIR", str(tmp_path))
     monkeypatch.setattr(__main__.asyncio, "run", lambda coroutine: coroutine.close())
 
     __main__.main()

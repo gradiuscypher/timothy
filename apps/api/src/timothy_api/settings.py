@@ -11,6 +11,7 @@ values stop the backend from starting at all.
 """
 
 from datetime import timedelta
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import BeforeValidator, Field, SecretStr
@@ -92,6 +93,21 @@ SnowflakeSet = Annotated[frozenset[int], NoDecode, BeforeValidator(_snowflake_se
 mutable field would make the model unhashable."""
 
 
+def _optional_path(value: object) -> object:
+    """Read a path that an empty setting turns off rather than points at `.`.
+
+    `TIMOTHY_LOG_DIR=` is how a bare `timothy-api` outside compose says "no log file".
+    Left to pydantic, that empty string parses as `Path(".")` and the process quietly
+    writes its logs into whatever directory it happens to have been started from.
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+LogDir = Annotated[Path | None, BeforeValidator(_optional_path)]
+
+
 class Settings(BaseSettings):
     """Backend process settings."""
 
@@ -103,6 +119,15 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = "info"
     database_url: str = "sqlite+aiosqlite:////data/timothy.db"
+
+    log_dir: LogDir = Path("/logs")
+    """Where the rotating log file goes, alongside every other service's.
+
+    Compose bind-mounts `./logs` here, so the file survives the container being recreated
+    — which the daemon's own buffer does not, and which is the whole reason this exists.
+    Empty turns the file off and leaves logging on stdout, for a test or a bare
+    `timothy-api` outside compose.
+    """
 
     # -- credentials ---------------------------------------------------------
 

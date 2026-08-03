@@ -300,3 +300,53 @@ Counts over time come from the append-only `audit_log`. They deliberately do **n
 from `enforcement_outcomes`, which holds one row per (guild, user, pool) updated in place
 — grouping its `attempted_at` by day would draw a confident chart of something that is
 not true.
+
+### Logs
+
+Every service writes into `./logs/` on the host, and the files survive the containers
+being rebuilt or recreated (ADR 0014):
+
+```
+logs/backend.log      JSON lines — the API, the worker, the sweeper, uvicorn
+logs/bot.log          JSON lines — the gateway client and the relay
+logs/web-access.log   nginx, one line per request
+logs/web-error.log    nginx
+logs/cloudflared.log  the tunnel
+```
+
+`docker compose logs` still works and shows the same thing for the current containers;
+the difference is that these outlive them, which is what makes "when did this start?"
+answerable.
+
+Every file rolls at 10MB and keeps nine behind the live one, so each tops out at 100MB and
+the directory needs no attention. Nothing on the host does that — the Python services
+rotate themselves, nginx runs `logrotate` inside its own container, and cloudflared
+rotates its own.
+
+Everything a process is unhappy about is at `ERROR` or above, and the JSON lines are
+built to be filtered:
+
+```bash
+# Every error anywhere in the stack, most recent last.
+grep -h '"level":"ERROR"' logs/backend.log logs/bot.log
+
+# Just the tracebacks, readable.
+jq -r 'select(.exception) | "\(.ts) \(.logger)\n\(.exception)"' logs/backend.log
+
+# What happened to one guild.
+grep 100000000000000002 logs/*.log
+```
+
+A React crash in the web UI is posted to the backend by the SPA and appears in
+`backend.log` under the logger `timothy.web`, with the component stack in
+`extra.client_stack` — a blank page in somebody's browser leaves a record on the host.
+
+**Credentials are stripped before anything is written.** The bot token, the internal
+token and the OAuth client secret are registered by exact value, and labelled secrets
+(`token=`, `Authorization: Bearer`, `?code=`) are caught by shape on top of that. nginx
+logs the route without its query string, so an OAuth code never reaches the file at all.
+It is worth grepping a log for a token you know before pasting it anywhere — but if
+something did get through, that is a bug in `packages/logs`, not something to work
+around.
+
+Turn the files off with an empty `TIMOTHY_LOG_DIR`; logging falls back to stdout only.

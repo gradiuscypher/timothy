@@ -5,11 +5,19 @@ description = "Discord gateway relay and slash command surface"
 requires-python = ">=3.13"
 # Deliberately no dependency on timothy-core: the bot relays events and renders
 # responses, and has no domain logic to share. See PLAN.md, "Layout".
+#
+# timothy-logs is not a hole in that. It is a rotating file handler and a redactor, it
+# depends on nothing itself, and the alternative is a second copy of the redaction rules
+# in the process that holds the bot token — which is the one place they matter most.
 dependencies = [
     "discord-py>=2.4",
     "httpx>=0.28",
     "pydantic-settings>=2.7",
+    "timothy-logs",
 ]
+
+[tool.uv.sources]
+timothy-logs = { workspace = true }
 
 [project.scripts]
 timothy-bot = "timothy_bot.__main__:main"

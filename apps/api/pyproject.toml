@@ -5,6 +5,7 @@ description = "FastAPI backend: authorization, enforcement workers, sweep schedu
 requires-python = ">=3.13"
 dependencies = [
     "timothy-core",
+    "timothy-logs",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "pydantic-settings>=2.7",
@@ -17,6 +18,7 @@ timothy-api = "timothy_api.__main__:main"
 
 [tool.uv.sources]
 timothy-core = { workspace = true }
+timothy-logs = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

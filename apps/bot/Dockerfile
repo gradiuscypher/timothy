@@ -16,6 +16,7 @@ WORKDIR /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=packages/logs/pyproject.toml,target=packages/logs/pyproject.toml \
     --mount=type=bind,source=packages/core/pyproject.toml,target=packages/core/pyproject.toml \
     --mount=type=bind,source=apps/api/pyproject.toml,target=apps/api/pyproject.toml \
     --mount=type=bind,source=apps/bot/pyproject.toml,target=apps/bot/pyproject.toml \
@@ -23,6 +24,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-install-workspace --package timothy-bot
 
 COPY pyproject.toml uv.lock ./
+# The bot installs this one, so its source ships. See ADR 0014 and
+# `apps/bot/tests/test_boundaries.py` for why it is the only package it shares.
+COPY packages/logs packages/logs
 COPY packages/core/pyproject.toml packages/core/pyproject.toml
 COPY apps/api/pyproject.toml apps/api/pyproject.toml
 # The migration's manifest, for the same reason as above: the workspace has to

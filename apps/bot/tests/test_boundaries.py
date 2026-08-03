@@ -15,6 +15,7 @@ from pathlib import Path
 
 SOURCE = Path(__file__).parent.parent / "src" / "timothy_bot"
 PYPROJECT = Path(__file__).parent.parent / "pyproject.toml"
+LOGS_PYPROJECT = Path(__file__).parents[3] / "packages" / "logs" / "pyproject.toml"
 
 FORBIDDEN = {"timothy_core", "timothy_api"}
 
@@ -40,14 +41,32 @@ def test_the_bot_imports_neither_the_domain_nor_the_backend() -> None:
     assert offenders == []
 
 
-def test_the_bot_declares_only_what_it_needs() -> None:
-    """discord.py to hold the gateway, httpx to reach the backend, pydantic-settings to
-    read the environment. Nothing that would let domain logic in."""
-    manifest = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-
-    declared = {
+def _declared(manifest_path: Path) -> set[str]:
+    manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+    return {
         requirement.split(">")[0].split("[")[0].strip()
         for requirement in manifest["project"]["dependencies"]
     }
 
-    assert declared == {"discord-py", "httpx", "pydantic-settings"}
+
+def test_the_bot_declares_only_what_it_needs() -> None:
+    """discord.py to hold the gateway, httpx to reach the backend, pydantic-settings to
+    read the environment, timothy-logs to write a log file. Nothing that would let domain
+    logic in."""
+    assert _declared(PYPROJECT) == {
+        "discord-py",
+        "httpx",
+        "pydantic-settings",
+        "timothy-logs",
+    }
+
+
+def test_the_logging_package_stays_a_leaf() -> None:
+    """The one shared package the bot is allowed, and the reason it is allowed.
+
+    `timothy-logs` is a file handler and a redactor with no dependencies of its own, so
+    depending on it pulls in nothing (ADR 0014). The moment it grows one, this test is
+    the thing that says so — otherwise it becomes the route by which the domain, or
+    SQLAlchemy, arrives in the bot's image after all.
+    """
+    assert _declared(LOGS_PYPROJECT) == set()

@@ -6,6 +6,7 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.13"
 dependencies = [
+    "timothy-logs",
     "timothy-core",
     "timothy-api",
     "timothy-bot",
@@ -16,6 +17,7 @@ dependencies = [
 members = ["packages/*", "apps/*", "migration"]
 
 [tool.uv.sources]
+timothy-logs = { workspace = true }
 timothy-core = { workspace = true }
 timothy-api = { workspace = true }
 timothy-bot = { workspace = true }
@@ -45,7 +47,13 @@ bypass-selection = true
 [tool.ruff]
 line-length = 96
 target-version = "py313"
-src = ["packages/core/src", "apps/api/src", "apps/bot/src", "migration/src"]
+src = [
+    "packages/logs/src",
+    "packages/core/src",
+    "apps/api/src",
+    "apps/bot/src",
+    "migration/src",
+]
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -115,7 +123,13 @@ runtime-evaluated-base-classes = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["timothy_core", "timothy_api", "timothy_bot", "timothy_migration"]
+known-first-party = [
+    "timothy_logs",
+    "timothy_core",
+    "timothy_api",
+    "timothy_bot",
+    "timothy_migration",
+]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -127,6 +141,7 @@ docstring-code-format = true
 [tool.ty.environment]
 python-version = "3.13"
 root = [
+    "packages/logs/src",
     "packages/core/src",
     "apps/api/src",
     "apps/bot/src",
@@ -163,6 +178,7 @@ error-on-warning = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = [
+    "packages/logs/tests",
     "packages/core/tests",
     "apps/api/tests",
     "apps/bot/tests",
@@ -181,7 +197,7 @@ filterwarnings = ["error"]
 
 [tool.coverage.run]
 branch = true
-source = ["timothy_core", "timothy_api", "timothy_bot", "timothy_migration"]
+source = ["timothy_logs", "timothy_core", "timothy_api", "timothy_bot", "timothy_migration"]
 concurrency = ["thread", "greenlet"]
 # `TestClient` runs the app in its own thread, and SQLAlchemy's async layer switches
 # greenlets on every `await`. Without both, request handlers report as unexecuted lines

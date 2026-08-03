@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from timothy_api.routers import (
     audit_log,
+    client_logs,
     enforcement,
     events,
     exceptions,
@@ -30,5 +31,6 @@ for router in (
     events.router,
     audit_log.router,
     ops.router,
+    client_logs.router,
 ):
     api.include_router(router)

@@ -85,6 +85,7 @@ classes are compatible, so `shadcn add` later drops in over the top rather than 
 ```
 timothy/
 ├── pyproject.toml          uv workspace root
+├── packages/logs/          rotating JSON log files with redaction — no dependencies
 ├── packages/core/          domain, schema, Discord port, enforcement engine
 ├── apps/api/               FastAPI, authz, workers, scheduler
 ├── apps/bot/               gateway relay — discord.py + httpx only, no core
@@ -94,7 +95,9 @@ timothy/
 ```
 
 The bot deliberately does not depend on `core`. It relays events and renders responses;
-it has no domain logic to share.
+it has no domain logic to share. It does depend on `logs`, which is why that is a separate
+package rather than a module in `core`: a rotating file handler and a redactor are worth
+sharing, and everything else in `core` is not (ADR 0014).
 
 ## Schema
 

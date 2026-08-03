@@ -4,6 +4,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { ApiError } from "@/api/client";
+import { installGlobalErrorReporting } from "@/api/report";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { makeRouter } from "@/router";
 
 import "./styles.css";
@@ -31,11 +33,15 @@ export function makeQueryClient(): QueryClient {
 
 const root = document.getElementById("root");
 if (root) {
+  // Installed before the first render, so an error thrown on the way up is caught too.
+  installGlobalErrorReporting();
   createRoot(root).render(
     <StrictMode>
-      <QueryClientProvider client={makeQueryClient()}>
-        <RouterProvider router={makeRouter()} />
-      </QueryClientProvider>
+      <ErrorBoundary>
+        <QueryClientProvider client={makeQueryClient()}>
+          <RouterProvider router={makeRouter()} />
+        </QueryClientProvider>
+      </ErrorBoundary>
     </StrictMode>,
   );
 }

@@ -10,6 +10,7 @@ import logging
 
 import httpx
 
+import timothy_logs as logs
 from timothy_bot import api
 from timothy_bot.client import TimothyBot
 from timothy_bot.settings import Settings
@@ -45,7 +46,18 @@ async def run(settings: Settings) -> None:
 def main() -> None:
     """Configure logging and run."""
     settings = Settings()
-    logging.basicConfig(level=settings.log_level.upper())
+    logs.configure(
+        "bot",
+        level=settings.log_level,
+        log_dir=settings.log_dir,
+        # discord.py puts the token in the `Authorization` header it builds, and reports
+        # a failed login by showing the request it made. The internal token travels the
+        # same way to the backend.
+        secrets=(
+            settings.discord_token.get_secret_value(),
+            settings.internal_token.get_secret_value(),
+        ),
+    )
     # httpx logs a line per request at INFO, and the relay already logs one per event
     # saying what the backend decided. Two lines for every gateway event is one too many.
     logging.getLogger("httpx").setLevel(logging.WARNING)
