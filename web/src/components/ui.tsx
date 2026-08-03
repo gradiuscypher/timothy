@@ -323,8 +323,27 @@ export function When({ iso }: { iso: string }) {
 }
 
 /** A Discord ID. Always monospaced, never wrapped, always selectable in one go. */
-export function Snowflake({ id }: { id: string }) {
-  return <span className="snowflake">{id}</span>;
+export function Snowflake({ id, className }: { id: string; className?: string }) {
+  return <span className={cn("snowflake", className)}>{id}</span>;
+}
+
+/**
+ * A server, by what it is called.
+ *
+ * The name is a cache the gateway fills, so it can be missing — a server registered
+ * before Timothy stored names and not seen since, or one Timothy has left — and the ID
+ * is shown alone when it is. Where there is a name the ID stays underneath it, quieter:
+ * it is what a person pastes into Discord's search and what every log line says, and
+ * two servers may well share a name.
+ */
+export function GuildName({ id, name }: { id: string; name?: string | null }) {
+  if (!name) return <Snowflake id={id} />;
+  return (
+    <span className="flex flex-col gap-0.5">
+      <span>{name}</span>
+      <Snowflake id={id} className="text-xs text-surface-muted" />
+    </span>
+  );
 }
 
 /** `user:123…` or `system`, rendered so Timothy's own actions are visibly not a person. */

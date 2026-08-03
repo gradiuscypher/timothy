@@ -5,41 +5,231 @@
    Two colour scales, both neutral: `surface` for chrome and `accent` for the one thing
    on a screen that is a link or a primary action. Timothy's screens are dense tables of
    user IDs and reasons, and colour here means "this is different", not decoration —
-   `warn` and `ban` are the only two places it carries meaning. */
+   `warn` and `ban` are the only two places it carries meaning.
+
+   There are two families of that scale, each in a light and a dark mode, and the choice
+   is the reader's rather than the operating system's. `<html>` carries `data-family` and
+   a `data-mode` that is always resolved to `light` or `dark`; "follow the system" is a
+   stored preference that the inline script in `index.html` resolves before first paint
+   and a `matchMedia` listener keeps up to date. Nothing here needs a media query, and
+   nothing here needs to know that "system" exists.
+
+   A note on how this file is arranged, because the arrangement is load-bearing. `@theme`
+   appears exactly once, at the top level. Nesting it inside `@media` or a selector does
+   not scope it: Tailwind hoists the declarations, and the last one silently wins. This
+   file used to do that, which is why the light palette it appeared to define had never
+   rendered a single pixel. Tokens are declared once, below, and every theme overrides
+   them as ordinary custom properties on an ordinary selector. */
+
+/* -- typefaces ------------------------------------------------------------------------
+
+   Berkeley Mono is licensed, not redistributable, and never enters this repository or
+   any image built from it. It is bind-mounted onto `/fonts/berkeley/` on the host that
+   runs the deployment, so on that host these four faces resolve and everywhere else —
+   CI, a fresh clone, anyone's laptop without the licence — they 404 and the family is
+   simply unavailable. That is not an error path needing handling; it is what the
+   `font-family` stack below is for. IBM Plex Mono sits behind it under the SIL Open Font
+   License, it is committed, and it is the face the industrial theme is designed against
+   for everybody who does not have the other one. */
+
+@font-face {
+  font-family: "Berkeley Mono";
+  src: url("/fonts/berkeley/BerkeleyMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Berkeley Mono";
+  src: url("/fonts/berkeley/BerkeleyMono-Oblique.woff2") format("woff2");
+  font-weight: 400;
+  font-style: oblique;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Berkeley Mono";
+  src: url("/fonts/berkeley/BerkeleyMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Berkeley Mono";
+  src: url("/fonts/berkeley/BerkeleyMono-Bold-Oblique.woff2") format("woff2");
+  font-weight: 700;
+  font-style: oblique;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/plex/IBMPlexMono-Regular-latin.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/plex/IBMPlexMono-Bold-latin.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* -- tokens ---------------------------------------------------------------------------
+
+   Declared once so Tailwind generates the utilities. The values are Default Dark, which
+   is what every visitor saw before this file grew a second theme, so a browser that runs
+   no JavaScript at all still gets a finished-looking screen rather than an unstyled one. */
 
 @theme {
+  --color-surface-0: oklch(19% 0.008 260);
+  --color-surface-1: oklch(23% 0.01 260);
+  --color-surface-2: oklch(28% 0.012 260);
+  --color-surface-border: oklch(36% 0.014 260);
+  --color-surface-ink: oklch(94% 0.004 260);
+  --color-surface-muted: oklch(70% 0.012 260);
+
+  --color-accent: oklch(70% 0.14 265);
+  --color-accent-ink: oklch(20% 0.01 260);
+
+  --color-danger: oklch(70% 0.17 25);
+  --color-warn: oklch(76% 0.14 75);
+  --color-ok: oklch(72% 0.13 155);
+
+  /* The body face is a token so a family can change it. `--font-mono` is Tailwind's own,
+     overridden here only by the industrial family — the default family keeps the system
+     monospace stack it has always used for IDs. */
+  --font-body:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    sans-serif;
+}
+
+/* -- default, light -------------------------------------------------------------------
+
+   The palette this file has carried since it was written and has never once displayed:
+   same hues as the dark scale, lightness inverted, accent darkened to hold its contrast
+   against white. */
+
+html[data-family="default"][data-mode="light"] {
+  color-scheme: light;
+
   --color-surface-0: oklch(99% 0 0);
   --color-surface-1: oklch(97% 0.002 260);
   --color-surface-2: oklch(93% 0.004 260);
-  --color-surface-border: oklch(88% 0.006 260);
+  --color-surface-border: oklch(80% 0.01 260);
   --color-surface-ink: oklch(25% 0.01 260);
-  --color-surface-muted: oklch(52% 0.012 260);
+  --color-surface-muted: oklch(45% 0.012 260);
 
   --color-accent: oklch(52% 0.16 265);
   --color-accent-ink: oklch(98% 0 0);
 
-  --color-danger: oklch(52% 0.19 25);
-  --color-warn: oklch(62% 0.15 75);
-  --color-ok: oklch(55% 0.13 155);
+  --color-danger: oklch(49% 0.2 25);
+  --color-warn: oklch(49% 0.13 70);
+  --color-ok: oklch(47% 0.13 155);
 }
 
-@media (prefers-color-scheme: dark) {
-  @theme {
-    --color-surface-0: oklch(19% 0.008 260);
-    --color-surface-1: oklch(23% 0.01 260);
-    --color-surface-2: oklch(28% 0.012 260);
-    --color-surface-border: oklch(36% 0.014 260);
-    --color-surface-ink: oklch(94% 0.004 260);
-    --color-surface-muted: oklch(70% 0.012 260);
+/* -- default, dark --------------------------------------------------------------------
 
-    --color-accent: oklch(70% 0.14 265);
-    --color-accent-ink: oklch(20% 0.01 260);
+   The same values as the tokens above. Written out rather than left to inherit, because
+   a theme that is defined by the absence of a rule is a theme nobody can find. */
 
-    --color-danger: oklch(68% 0.17 25);
-    --color-warn: oklch(76% 0.14 75);
-    --color-ok: oklch(72% 0.13 155);
-  }
+html[data-family="default"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --color-surface-0: oklch(19% 0.008 260);
+  --color-surface-1: oklch(23% 0.01 260);
+  --color-surface-2: oklch(28% 0.012 260);
+  --color-surface-border: oklch(36% 0.014 260);
+  --color-surface-ink: oklch(94% 0.004 260);
+  --color-surface-muted: oklch(70% 0.012 260);
+
+  --color-accent: oklch(70% 0.14 265);
+  --color-accent-ink: oklch(20% 0.01 260);
+
+  --color-danger: oklch(70% 0.17 25);
+  --color-warn: oklch(76% 0.14 75);
+  --color-ok: oklch(72% 0.13 155);
 }
+
+/* -- industrial -----------------------------------------------------------------------
+
+   A drawing rather than a document: monospace throughout, square corners, hairline rules
+   where the default family uses fill and radius, and a much longer run between the ink
+   and the ground than the default family asks for. The neutrals carry a blue cast and
+   the accent is steel rather than the reference's red, which keeps `danger` the only
+   saturated warm thing on any screen — the one distinction these tables cannot afford to
+   lose.
+
+   Squaring the corners needs no component changes. Every `rounded-*` utility Tailwind
+   emits reads its value from a `--radius-*` custom property, so overriding those here
+   reaches every one of them at once, including the ones in route JSX this file has never
+   heard of. */
+
+html[data-family="industrial"] {
+  --font-body: "Berkeley Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo,
+    monospace;
+  --font-mono: "Berkeley Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo,
+    monospace;
+
+  --radius: 0;
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+}
+
+/* Rules do the work borders and fills do elsewhere, so they have to be visible at 1px.
+   The table headers are already uppercase; industrial only opens the tracking, which is
+   what makes a label read as a stamped heading rather than as small text. */
+html[data-family="industrial"] thead th {
+  letter-spacing: 0.12em;
+}
+
+html[data-family="industrial"][data-mode="light"] {
+  color-scheme: light;
+
+  --color-surface-0: oklch(98% 0.002 250);
+  --color-surface-1: oklch(95% 0.004 250);
+  --color-surface-2: oklch(90% 0.008 250);
+  --color-surface-border: oklch(58% 0.018 250);
+  --color-surface-ink: oklch(17% 0.02 255);
+  --color-surface-muted: oklch(43% 0.022 250);
+
+  --color-accent: oklch(44% 0.16 250);
+  --color-accent-ink: oklch(99% 0 0);
+
+  --color-danger: oklch(47% 0.2 25);
+  --color-warn: oklch(48% 0.12 70);
+  --color-ok: oklch(45% 0.12 160);
+}
+
+html[data-family="industrial"][data-mode="dark"] {
+  color-scheme: dark;
+
+  --color-surface-0: oklch(15% 0.012 255);
+  --color-surface-1: oklch(19% 0.014 255);
+  --color-surface-2: oklch(25% 0.016 252);
+  --color-surface-border: oklch(45% 0.022 250);
+  --color-surface-ink: oklch(97% 0.004 250);
+  --color-surface-muted: oklch(71% 0.018 250);
+
+  --color-accent: oklch(72% 0.14 245);
+  --color-accent-ink: oklch(15% 0.02 255);
+
+  --color-danger: oklch(68% 0.19 25);
+  --color-warn: oklch(80% 0.13 80);
+  --color-ok: oklch(74% 0.13 163);
+}
+
+/* -- the frame ------------------------------------------------------------------------ */
 
 html,
 body,
@@ -49,9 +239,7 @@ body,
 
 body {
   @apply bg-surface-0 text-surface-ink antialiased;
-  font-family:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
-    sans-serif;
+  font-family: var(--font-body);
 }
 
 /* Snowflakes and reasons are compared by eye far more often than they are read, so

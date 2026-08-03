@@ -3,7 +3,16 @@ import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { LOGIN_URL, type SignedIn } from "@/api/client";
 import { useLogout, useSignedIn } from "@/api/hooks";
 import { cn } from "@/components/cn";
-import { Button, ErrorNote, Loading } from "@/components/ui";
+import {
+  FAMILIES,
+  FAMILY_LABELS,
+  MODES,
+  MODE_LABELS,
+  useTheme,
+  type Family,
+  type Mode,
+} from "@/components/theme";
+import { Button, ErrorNote, Loading, Select } from "@/components/ui";
 
 /**
  * The frame every screen is drawn in, and the gate in front of it.
@@ -71,6 +80,51 @@ function SignIn() {
   );
 }
 
+/**
+ * Two selects rather than one list of every combination, because the two choices are
+ * independent — see `theme.ts`. Native `<select>` for the same reason the rest of this
+ * file uses native elements: it is labelled, keyboard-operable and screen-reader correct
+ * without a line of code, and the alternative is writing a popover.
+ *
+ * This lives in the top bar, which the shell only renders behind a session. Somebody
+ * signed out sees the login screen in whatever theme they last chose but cannot change it
+ * there — a control on a page you visit once, to change something you cannot yet see the
+ * effect of, is not worth the second copy.
+ */
+function ThemePicker() {
+  const { family, mode, setFamily, setMode } = useTheme();
+  const compact = "h-8 w-auto py-0 pr-7 pl-2 text-xs";
+
+  return (
+    <div className="flex items-center gap-1">
+      <Select
+        aria-label="Theme"
+        className={compact}
+        value={family}
+        onChange={(event) => setFamily(event.target.value as Family)}
+      >
+        {FAMILIES.map((option) => (
+          <option key={option} value={option}>
+            {FAMILY_LABELS[option]}
+          </option>
+        ))}
+      </Select>
+      <Select
+        aria-label="Light or dark"
+        className={compact}
+        value={mode}
+        onChange={(event) => setMode(event.target.value as Mode)}
+      >
+        {MODES.map((option) => (
+          <option key={option} value={option}>
+            {MODE_LABELS[option]}
+          </option>
+        ))}
+      </Select>
+    </div>
+  );
+}
+
 function TopBar({ me }: { me: SignedIn }) {
   const logout = useLogout();
   const path = useRouterState({ select: (state) => state.location.pathname });
@@ -110,6 +164,7 @@ function TopBar({ me }: { me: SignedIn }) {
           })}
         </nav>
         <div className="ml-auto flex items-center gap-2 text-sm">
+          <ThemePicker />
           <span className="text-surface-muted">{me.username ?? me.actor}</span>
           <Button
             size="sm"

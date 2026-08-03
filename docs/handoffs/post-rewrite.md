@@ -108,9 +108,10 @@ rebuilds every image from scratch. A comment marks the spot in `ci.yml`.
 - **`audit_log` grows forever and nothing prunes it.** The first thing that will want a
   retention policy — and that policy is a decision about how far back "why is this user
   banned" has to reach, not a chore.
-- **Guild names are never shown, only IDs.** The `guilds` table holds the ID and nothing
-  else, and fetching a hundred names to decorate a list would spend the rate-limit budget
-  enforcement runs on. Doing it properly means caching names.
+- ~~**Guild names are never shown, only IDs.**~~ Done: `guilds.name` is a cache the bot
+  fills from the gateway, which it has for free, and the web UI shows the name with the ID
+  beneath it. Nothing asks Discord to render a page. A guild registered before revision
+  `0004` has no name until the bot next reconnects, and shows its ID alone until then.
 - **`GET /guilds` costs a resolved permission per candidate guild.** Cheap for a browser,
   whose ADR 0010 snapshot is a handful; expensive for a service caller with no snapshot,
   which is why the bot has no command for it.

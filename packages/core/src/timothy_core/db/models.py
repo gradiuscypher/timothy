@@ -127,6 +127,15 @@ class Guild(Base):
     __tablename__ = "guilds"
 
     guild_id: Mapped[Snowflake] = mapped_column(primary_key=True, autoincrement=False)
+    name: Mapped[str | None] = mapped_column(String(100), default=None)
+    """What the guild was called the last time the gateway mentioned it.
+
+    A cache, and nullable because it can be stale or absent: a guild registered before
+    this column existed has none until the bot next reconnects, and nothing may depend on
+    it. The ID is the identity — this is only so a person reading the web UI recognises
+    which of their servers they are looking at, without Timothy spending a Discord call
+    per row to find out."""
+
     joined_at: Mapped[datetime] = mapped_column(default=_utcnow)
     enforcement_paused: Mapped[bool] = mapped_column(default=False)
     """The per-guild rail from ADR 0007: isolate one misbehaving guild without stopping

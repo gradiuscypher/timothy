@@ -7,3 +7,10 @@ dist
 openapi.json
 scripts
 eslint.config.js
+
+# Berkeley Mono is licensed and must never enter an image. Local development symlinks the
+# real faces into `public/fonts/berkeley/` and `vite build` copies whatever it finds in
+# `public/` into `dist/`, so without this a build run on the machine that holds the
+# licence would quietly bake the fonts into the image it produces. They arrive at runtime
+# instead, as a read-only bind mount — see compose.yaml.
+public/fonts/berkeley

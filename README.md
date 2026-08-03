@@ -32,6 +32,34 @@ npm run dev          # serve the SPA, proxying /api to http://localhost:8000
 rather than a build-time fetch. CI regenerates it and fails if the committed copy has
 drifted — run `npm run api` and commit the result whenever the API changes.
 
+### Themes
+
+Two families — **default** and **industrial** — each in light and dark, chosen from two
+selects in the top bar and stored in the browser. Mode also offers **system**, which is
+the behaviour the app had before it had a selector.
+
+`web/src/styles.css` is the whole of it. Tokens are declared once in a single top-level
+`@theme`; each theme overrides them as ordinary custom properties under
+`html[data-family=…][data-mode=…]`. That arrangement is not incidental — `@theme` nested
+inside a `@media` block or a selector is **not** scoped to it. Tailwind hoists the
+declarations and the last one silently wins, which is how this file spent its first months
+defining a light palette that never rendered a pixel. `src/test/styles.test.ts` compiles
+the real stylesheet and asserts the four themes still resolve to four different palettes,
+because no test running under `css: false` can see that they do not.
+
+`data-mode` on `<html>` is always `light` or `dark`; "system" is a stored preference the
+inline script in `index.html` resolves before the first paint. That script is a deliberate
+duplicate of `src/components/theme.ts` — nothing imported by the bundle can run early
+enough to prevent a flash — and the two must be kept in step. It also means a
+Content-Security-Policy, if one is ever added to `web/nginx.conf`, needs a hash or a nonce
+for it.
+
+The industrial family is designed against **Berkeley Mono**, which is licensed and is in
+neither this repository nor any image built from it. Symlink your own copy in for local
+work and set `TIMOTHY_BERKELEY_MONO_DIR` to serve it from a deployment — see
+`web/public/fonts/berkeley/README.md`. Without it the theme renders in IBM Plex Mono,
+which is committed under the SIL OFL, and that is the only font CI has ever seen.
+
 ## Running
 
 ```sh

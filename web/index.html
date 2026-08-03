@@ -3,8 +3,50 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light dark" />
+    <!-- Matches the token block in styles.css, which is Default Dark, and is what a
+         browser running no JavaScript ends up displaying. Everybody else has this
+         overridden by the script below before the first paint. -->
+    <meta name="color-scheme" content="dark" />
     <title>Timothy</title>
+    <script>
+      // The theme, stamped onto <html> before anything paints.
+      //
+      // This is a deliberate duplicate of src/components/theme.ts, which owns the same
+      // logic for the rest of the app's life. It cannot import from it: the module graph
+      // is only running once the bundle has been fetched and evaluated, and by then the
+      // page has already painted. Without this, every visit on any theme but Default Dark
+      // begins with a full-screen flash of the wrong one. Keep the two keys, the two
+      // defaults and the resolution rule below in step with that file.
+      //
+      // No CSP is set on this response today (see web/nginx.conf). If one is ever added,
+      // this script needs a hash or a nonce, or the page loses its theme.
+      (function () {
+        var root = document.documentElement;
+        var family = "default";
+        var mode = null;
+        try {
+          var storedFamily = localStorage.getItem("timothy.theme.family");
+          if (storedFamily === "default" || storedFamily === "industrial") {
+            family = storedFamily;
+          }
+          var storedMode = localStorage.getItem("timothy.theme.mode");
+          if (storedMode === "light" || storedMode === "dark") mode = storedMode;
+        } catch (e) {
+          // Storage is blocked. The defaults below are still a finished-looking screen.
+        }
+        if (!mode) {
+          // Either nothing stored or "system", which mean the same thing on first paint.
+          mode =
+            window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        }
+        root.dataset.family = family;
+        root.dataset.mode = mode;
+        root.style.colorScheme = mode;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

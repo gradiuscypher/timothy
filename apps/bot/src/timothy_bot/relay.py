@@ -39,14 +39,34 @@ async def ban_removed(api: Api, *, guild_id: int, user_id: int) -> None:
     log.info("unban %s in %s: %s", user_id, guild_id, action)
 
 
-async def guild_joined(api: Api, guild_id: int) -> None:
-    """Timothy is in a guild. Registering is idempotent and safe to repeat."""
+async def guild_joined(api: Api, guild_id: int, name: str | None = None) -> None:
+    """Timothy is in a guild. Registering is idempotent and safe to repeat.
+
+    The name goes with it because the gateway already has it — it arrives with the guild
+    itself — and the backend has no cheap way to ask for it later. Sending it on every
+    announcement is also what keeps it current after a rename.
+    """
     try:
-        await api.register_guild(guild_id)
+        await api.register_guild(guild_id, name=name)
     except ApiError as error:
         log.warning("guild %s not registered: %s", guild_id, error.detail)
         return
     log.info("guild %s registered", guild_id)
+
+
+async def guild_renamed(api: Api, guild_id: int, name: str) -> None:
+    """A guild Timothy is in was renamed.
+
+    The same idempotent registration call, given a name to store. Separate from
+    :func:`guild_joined` only so the log says what happened; a rename that fails to
+    relay is corrected by the next reconnect, which re-announces everything.
+    """
+    try:
+        await api.register_guild(guild_id, name=name)
+    except ApiError as error:
+        log.warning("guild %s rename not relayed: %s", guild_id, error.detail)
+        return
+    log.info("guild %s renamed to %s", guild_id, name)
 
 
 async def guild_left(api: Api, guild_id: int) -> None:
@@ -66,7 +86,7 @@ async def guild_left(api: Api, guild_id: int) -> None:
     log.info("guild %s deregistered", guild_id)
 
 
-async def announce_guilds(api: Api, guild_ids: list[int]) -> None:
+async def announce_guilds(api: Api, guilds: list[tuple[int, str | None]]) -> None:
     """Re-register everything Timothy is in, after a connect or a reconnect.
 
     Additive only. Guilds Timothy was removed from while it was offline stay registered,
@@ -75,6 +95,10 @@ async def announce_guilds(api: Api, guild_ids: list[int]) -> None:
     acting on it would cascade away every guild's configuration. Those are cleaned up by
     hand with `DELETE /guilds/{id}`; until then the sweep records failed outcomes there
     and retries, which is the harmless direction to be wrong in.
+
+    Each guild arrives with its name, so this is also the pass that fills in the names
+    the backend never had: a deployment upgraded into stored names gets them on the bot's
+    next connect, rather than from a migration that would have to talk to Discord.
     """
-    for guild_id in guild_ids:
-        await guild_joined(api, guild_id)
+    for guild_id, name in guilds:
+        await guild_joined(api, guild_id, name)

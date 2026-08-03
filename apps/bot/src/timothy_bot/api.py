@@ -131,9 +131,15 @@ class Api:
 
     # -- guilds ------------------------------------------------------------------------
 
-    async def register_guild(self, guild_id: int) -> dict[str, Any]:
-        """Tell Timothy it is in a guild. Idempotent, and safe to repeat on reconnect."""
-        return await self._request("PUT", "/guilds/{guild_id}", guild_id=guild_id)
+    async def register_guild(self, guild_id: int, *, name: str | None = None) -> dict[str, Any]:
+        """Tell Timothy it is in a guild, and what it is called.
+
+        Idempotent, and safe to repeat on reconnect — which is also what keeps the name
+        current, since the gateway re-announces every guild each time it connects.
+        """
+        return await self._request(
+            "PUT", "/guilds/{guild_id}", body={"name": name}, guild_id=guild_id
+        )
 
     async def deregister_guild(self, guild_id: int) -> None:
         """Tell Timothy it has left a guild, and let its configuration cascade away."""

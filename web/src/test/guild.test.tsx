@@ -13,6 +13,7 @@ const GUILD = "100000000000000002";
 
 const GUILD_ROW = {
   guild_id: GUILD,
+  name: "Neon Atrium",
   joined_at: "2026-01-01T00:00:00Z",
   enforcement_paused: false,
 };
@@ -47,6 +48,23 @@ describe("a server's page", () => {
     const card = await screen.findByRole("region", { name: /Subscriptions/i });
     expect(card).toHaveTextContent(/At ban level, everyone listed on the pool is banned/);
     expect(card).toHaveTextContent(/At warn level nobody is banned/);
+  });
+
+  it("is titled with the server's name, and still shows its ID", async () => {
+    // The name is what an administrator recognises; the ID is what they paste into
+    // Discord's search, and two servers may well share a name.
+    guildScreen();
+
+    expect(await screen.findByText("Neon Atrium")).toBeInTheDocument();
+    expect(screen.getByText(GUILD)).toBeInTheDocument();
+  });
+
+  it("falls back to the ID when Timothy has not heard the name yet", async () => {
+    // Nothing depends on the name: it is a cache the gateway fills on reconnect, and a
+    // server registered before names were stored has none until then.
+    guildScreen({ guild: { ...GUILD_ROW, name: null } });
+
+    expect(await screen.findByText(GUILD)).toBeInTheDocument();
   });
 
   it("says loudly when enforcement is paused", async () => {

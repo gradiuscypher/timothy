@@ -409,5 +409,50 @@ def test_failures_are_grouped_by_guild_and_cause(
     assert "cannot ban" in failures[0]["reason"]
 
 
+def test_failures_name_the_guild_that_is_failing(
+    pool: TestClient, enforcement: Enforcement, discord: FakeDiscord
+) -> None:
+    """An operator reading this has to go and talk to somebody about it, and "Neon
+    Atrium" is a better start than eighteen digits."""
+    pool.put(f"/guilds/{GUILD}", json={"name": "Neon Atrium"}, headers=headers("system"))
+    _subscribe(pool)
+    discord.add_member(GUILD, LISTED_USER)
+    discord.fail(
+        "ban",
+        guild_id=GUILD,
+        user_id=LISTED_USER,
+        error=ForbiddenError("Timothy cannot ban this member"),
+    )
+    _list(pool, LISTED_USER)
+    enforcement.drain()
+
+    failures = pool.get("/ops/failures", headers=headers(OWNER)).json()
+
+    assert failures[0]["guild_name"] == "Neon Atrium"
+
+
+def test_a_guild_timothy_has_left_still_reports_its_failures(
+    pool: TestClient, enforcement: Enforcement, discord: FakeDiscord
+) -> None:
+    """Outcomes hold no foreign key and outlive the guild row on purpose, so the name is
+    an outer join and comes back empty rather than dropping the row."""
+    _subscribe(pool)
+    discord.add_member(GUILD, LISTED_USER)
+    discord.fail(
+        "ban",
+        guild_id=GUILD,
+        user_id=LISTED_USER,
+        error=ForbiddenError("Timothy cannot ban this member"),
+    )
+    _list(pool, LISTED_USER)
+    enforcement.drain()
+    pool.delete(f"/guilds/{GUILD}", headers=headers("system"))
+
+    failures = pool.get("/ops/failures", headers=headers(OWNER)).json()
+
+    assert len(failures) == 1
+    assert failures[0]["guild_name"] is None
+
+
 def test_nothing_failing_is_an_empty_list(pool: TestClient) -> None:
     assert pool.get("/ops/failures", headers=headers(OWNER)).json() == []

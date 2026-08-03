@@ -187,6 +187,10 @@ class GuildRead(BaseModel):
     """A guild Timothy is in."""
 
     guild_id: Snowflake
+    name: str | None
+    """What the gateway last said it was called, or `None` if it has not said yet. A
+    caller displaying this falls back to the ID, which is the identity."""
+
     joined_at: datetime
     enforcement_paused: bool
 
@@ -196,10 +200,22 @@ class GuildRead(BaseModel):
         return cls.model_validate(
             {
                 "guild_id": guild.guild_id,
+                "name": guild.name,
                 "joined_at": guild.joined_at,
                 "enforcement_paused": guild.enforcement_paused,
             }
         )
+
+
+class GuildRegister(BaseModel):
+    """What the bot knows about a guild it has just seen on the gateway.
+
+    Only the name, and even that is optional: registration has to keep working for a
+    caller that sends no body at all, because that is what every deployed bot older than
+    this field does.
+    """
+
+    name: str | None = Field(default=None, max_length=100)
 
 
 class GuildUpdate(BaseModel):
@@ -420,6 +436,10 @@ class FailureGroup(BaseModel):
     """
 
     guild_id: Snowflake
+    guild_name: str | None
+    """`None` for a guild Timothy has since left: these rows outlive the guild row
+    deliberately (see :class:`~timothy_core.db.models.EnforcementOutcome`)."""
+
     reason: str | None
     count: int
     latest_at: datetime

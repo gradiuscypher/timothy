@@ -52,9 +52,18 @@ async def test_a_ban_being_lifted_is_relayed(api: Api, backend: Backend) -> None
 
 
 async def test_joining_a_guild_registers_it(api: Api, backend: Backend) -> None:
-    await relay.guild_joined(api, GUILD)
+    await relay.guild_joined(api, GUILD, "Neon Atrium")
 
     assert backend.called == ("PUT", f"/guilds/{GUILD}")
+    assert backend.sent == {"name": "Neon Atrium"}
+
+
+async def test_a_rename_is_relayed(api: Api, backend: Backend) -> None:
+    """The same idempotent registration call, so a rename needs no route of its own."""
+    await relay.guild_renamed(api, GUILD, "Neon Atrium Annexe")
+
+    assert backend.called == ("PUT", f"/guilds/{GUILD}")
+    assert backend.sent == {"name": "Neon Atrium Annexe"}
 
 
 async def test_being_removed_from_a_guild_deregisters_it(api: Api, backend: Backend) -> None:
@@ -70,7 +79,7 @@ async def test_connecting_re_announces_every_guild(api: Api, backend: Backend) -
     first one auto-subscribes, so a guild that has unsubscribed stays unsubscribed."""
     other = GUILD + 1
 
-    await relay.announce_guilds(api, [GUILD, other])
+    await relay.announce_guilds(api, [(GUILD, "Neon Atrium"), (other, None)])
 
     assert [request.url.path for request in backend.requests] == [
         f"/guilds/{GUILD}",
@@ -78,12 +87,21 @@ async def test_connecting_re_announces_every_guild(api: Api, backend: Backend) -
     ]
 
 
+async def test_announcing_carries_the_names(api: Api, backend: Backend) -> None:
+    """The gateway has the name for free, so this is also the pass that fills in the
+    names for guilds registered before Timothy stored them."""
+    await relay.announce_guilds(api, [(GUILD, "Neon Atrium")])
+
+    assert backend.sent == {"name": "Neon Atrium"}
+
+
 @pytest.mark.parametrize(
     "relayed",
     [
         lambda api: relay.member_joined(api, guild_id=GUILD, user_id=LISTED_USER),
         lambda api: relay.ban_removed(api, guild_id=GUILD, user_id=LISTED_USER),
-        lambda api: relay.guild_joined(api, GUILD),
+        lambda api: relay.guild_joined(api, GUILD, "Neon Atrium"),
+        lambda api: relay.guild_renamed(api, GUILD, "Neon Atrium"),
         lambda api: relay.guild_left(api, GUILD),
     ],
 )
@@ -106,6 +124,6 @@ async def test_one_guild_failing_to_register_does_not_stop_the_rest(
 ) -> None:
     backend.fails(503, "Discord is unreachable")
 
-    await relay.announce_guilds(api, [GUILD, GUILD + 1])
+    await relay.announce_guilds(api, [(GUILD, None), (GUILD + 1, None)])
 
     assert len(backend.requests) == 2

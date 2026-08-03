@@ -41,6 +41,54 @@ def test_registration_is_idempotent(client: TestClient) -> None:
     assert second.json() == first.json()
 
 
+def test_registration_records_what_the_guild_is_called(client: TestClient) -> None:
+    """The gateway has the name for free; asking Discord for it later would cost a call
+    per guild, out of the same budget enforcement runs on."""
+    response = client.put(
+        f"/guilds/{GUILD}", json={"name": "Neon Atrium"}, headers=headers("system")
+    )
+
+    assert response.json()["name"] == "Neon Atrium"
+
+
+def test_registering_without_a_name_leaves_the_guild_unnamed(client: TestClient) -> None:
+    """A bot older than this field sends no body at all, and must still be able to
+    register."""
+    response = client.put(f"/guilds/{GUILD}", headers=headers("system"))
+
+    assert response.json()["name"] is None
+
+
+def test_re_registering_refreshes_the_name(client: TestClient) -> None:
+    """How a rename lands, and how a guild registered before names were stored gets
+    one: the announcement on every reconnect carries the current name."""
+    client.put(f"/guilds/{GUILD}", headers=headers("system"))
+
+    response = client.put(
+        f"/guilds/{GUILD}", json={"name": "Neon Atrium"}, headers=headers("system")
+    )
+
+    assert response.json()["name"] == "Neon Atrium"
+    assert (
+        client.get(f"/guilds/{GUILD}", headers=headers(GUILD_ADMIN)).json()["name"]
+        == "Neon Atrium"
+    )
+
+
+def test_a_registration_with_no_name_does_not_clear_the_stored_one(
+    client: TestClient,
+) -> None:
+    """A caller with no name to offer is not asserting that the guild has none."""
+    client.put(f"/guilds/{GUILD}", json={"name": "Neon Atrium"}, headers=headers("system"))
+
+    client.put(f"/guilds/{GUILD}", headers=headers("system"))
+
+    assert (
+        client.get(f"/guilds/{GUILD}", headers=headers(GUILD_ADMIN)).json()["name"]
+        == "Neon Atrium"
+    )
+
+
 def test_joining_subscribes_the_guild_to_the_shared_pool(client: TestClient) -> None:
     """ADR 0002 keeps what the old bot did — every guild enforced `global` — while
     dropping the reserved name that made it impossible to leave."""

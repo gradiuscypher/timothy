@@ -13,6 +13,11 @@ RUN npm ci
 COPY tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts index.html ./
 COPY src ./src
 
+# Vite copies this verbatim into dist/. It holds IBM Plex Mono, which is committed under
+# the SIL OFL; .dockerignore keeps the licensed Berkeley Mono faces out of the context
+# entirely, so this cannot pick them up even on the machine that has them.
+COPY public ./public
+
 # `npm run build` is `tsc -b && vite build`, so the image fails on a type error rather
 # than shipping one. The generated API client is committed, so this needs no backend.
 RUN npm run build

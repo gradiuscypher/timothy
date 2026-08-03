@@ -168,24 +168,51 @@ async def test_a_command_that_cannot_be_built_is_still_loud(
         await bot.setup_hook()
 
 
+def a_guild(name: str, guild_id: int = GUILD) -> "discord.Guild":
+    """A stand-in with the two attributes the client reads off a guild.
+
+    `discord.Object` carries an id and nothing else, and the name is now half of what a
+    registration says.
+    """
+    return cast("discord.Guild", SimpleNamespace(id=guild_id, name=name))
+
+
 @pytest.mark.anyio
 async def test_connecting_announces_the_guilds(
     bot: TimothyBot, backend: Backend, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        TimothyBot, "guilds", property(lambda _self: [discord.Object(id=GUILD)])
-    )
+    monkeypatch.setattr(TimothyBot, "guilds", property(lambda _self: [a_guild("Neon Atrium")]))
 
     await bot.on_ready()
 
     assert backend.called == ("PUT", f"/guilds/{GUILD}")
+    assert backend.sent == {"name": "Neon Atrium"}
 
 
 @pytest.mark.anyio
 async def test_joining_a_guild_registers_it(bot: TimothyBot, backend: Backend) -> None:
-    await bot.on_guild_join(cast("discord.Guild", discord.Object(id=GUILD)))
+    await bot.on_guild_join(a_guild("Neon Atrium"))
 
     assert backend.called == ("PUT", f"/guilds/{GUILD}")
+    assert backend.sent == {"name": "Neon Atrium"}
+
+
+@pytest.mark.anyio
+async def test_a_rename_is_relayed(bot: TimothyBot, backend: Backend) -> None:
+    await bot.on_guild_update(a_guild("Neon Atrium"), a_guild("Neon Atrium Annexe"))
+
+    assert backend.called == ("PUT", f"/guilds/{GUILD}")
+    assert backend.sent == {"name": "Neon Atrium Annexe"}
+
+
+@pytest.mark.anyio
+async def test_a_guild_change_that_is_not_a_rename_is_not_relayed(
+    bot: TimothyBot, backend: Backend
+) -> None:
+    """`GUILD_UPDATE` fires for a new banner too, and Timothy stores one field."""
+    await bot.on_guild_update(a_guild("Neon Atrium"), a_guild("Neon Atrium"))
+
+    assert backend.requests == []
 
 
 @pytest.mark.anyio

@@ -7,10 +7,10 @@ import {
   Cell,
   Empty,
   ErrorNote,
+  GuildName,
   Loading,
   PageTitle,
   Row,
-  Snowflake,
   Table,
   When,
 } from "@/components/ui";
@@ -18,9 +18,10 @@ import {
 /**
  * The servers this person administers that Timothy is in.
  *
- * Names are not shown, only IDs. Timothy's `guilds` table holds the ID and nothing else,
- * and fetching a hundred names from Discord to decorate a list would spend the same
- * rate-limit budget enforcement runs on. The server page is reached by ID either way.
+ * Named where Timothy knows the name. It is not asked of Discord to draw this — a call
+ * per row would spend the rate-limit budget enforcement runs on — but stored when the
+ * gateway mentions the guild, which it does on every reconnect. A server Timothy has not
+ * seen since the names were stored shows its ID alone, and the page still works.
  */
 export function Guilds() {
   const guilds = useMyGuilds();
@@ -47,7 +48,7 @@ export function Guilds() {
                     params={{ guildId: guild.guild_id }}
                     className="text-accent hover:underline"
                   >
-                    <Snowflake id={guild.guild_id} />
+                    <GuildName id={guild.guild_id} name={guild.name} />
                   </Link>
                 </Cell>
                 <Cell>

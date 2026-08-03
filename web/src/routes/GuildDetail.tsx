@@ -48,7 +48,16 @@ export function GuildDetail({ guildId }: { guildId: string }) {
       <PageTitle
         action={<PauseSwitch guildId={guildId} paused={guild.data.enforcement_paused} />}
       >
-        <span className="snowflake text-lg">{guildId}</span>
+        {/* The name is what a person recognises; the ID is what they paste into
+            Discord's search, so both are here and the ID never disappears. */}
+        {guild.data.name ? (
+          <span className="flex flex-col gap-0.5">
+            <span>{guild.data.name}</span>
+            <Snowflake id={guildId} className="text-sm font-normal text-surface-muted" />
+          </span>
+        ) : (
+          <span className="snowflake text-lg">{guildId}</span>
+        )}
       </PageTitle>
 
       {guild.data.enforcement_paused ? (

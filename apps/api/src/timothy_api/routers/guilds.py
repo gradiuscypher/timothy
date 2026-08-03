@@ -23,7 +23,7 @@ from timothy_api.deps import (
 from timothy_api.identity import CallerDep
 from timothy_api.lookups import find_pool, get_guild
 from timothy_api.policy import Operation
-from timothy_api.schemas import GuildRead, GuildUpdate, Snowflake
+from timothy_api.schemas import GuildRead, GuildRegister, GuildUpdate, Snowflake
 from timothy_core.actors import Actor
 from timothy_core.db.models import Guild, Subscription
 from timothy_core.enums import SubscriptionLevel
@@ -122,18 +122,29 @@ async def register_guild(
     actor: Registrar,
     session: SessionDep,
     settings: SettingsDep,
+    body: GuildRegister | None = None,
 ) -> GuildRead:
     """Record that Timothy is in a guild.
 
     Idempotent, because the bot re-announces its guilds every time the gateway
     reconnects. Only the first registration auto-subscribes; a guild that has since
     unsubscribed stays unsubscribed.
+
+    Re-registering is also how a name stays current: the announcement on every reconnect
+    carries whatever the guild is called now, and a rename relays through here too. A
+    body that names nothing leaves the stored name alone rather than clearing it — a
+    caller with no name to offer is not asserting that the guild has none.
     """
+    name = body.name if body is not None else None
+
     guild = await session.get(Guild, guild_id)
     if guild is not None:
+        if name is not None and name != guild.name:
+            guild.name = name
+            await session.commit()
         return GuildRead.of(guild)
 
-    guild = Guild(guild_id=guild_id)
+    guild = Guild(guild_id=guild_id, name=name)
     session.add(guild)
     await session.flush()
 

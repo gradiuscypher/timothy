@@ -74,6 +74,13 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    volumes:
+      # Berkeley Mono is licensed and is in neither the repository nor the image. Point
+      # TIMOTHY_BERKELEY_MONO_DIR at an unpacked copy on this host to serve it. Left
+      # unset, this mounts the empty tracked directory and the industrial theme renders
+      # in IBM Plex Mono instead, which is committed and ships in the image. Read-only:
+      # nginx has no business writing to somebody's font licence.
+      - ${TIMOTHY_BERKELEY_MONO_DIR:-./web/public/fonts/berkeley}:/usr/share/nginx/html/fonts/berkeley:ro
     networks: [timothy]
 
   cloudflared:

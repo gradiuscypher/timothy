@@ -30,3 +30,7 @@ web/openapi.json
 *.db
 *.db-wal
 *.db-shm
+
+# Berkeley Mono is licensed, not redistributable, and is mounted at runtime rather than
+# committed. The directory and its README are tracked; the faces never are.
+web/public/fonts/berkeley/*.woff2

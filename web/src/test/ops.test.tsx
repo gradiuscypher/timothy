@@ -135,6 +135,7 @@ describe("failures", () => {
       [
         {
           guild_id: "100000000000000002",
+          guild_name: "Neon Atrium",
           reason: "Timothy cannot ban this member",
           count: 412,
           latest_at: "2026-08-02T00:00:00Z",
@@ -145,6 +146,45 @@ describe("failures", () => {
     const card = await screen.findByRole("region", { name: "Failures" });
     expect(await within(card).findByText("412")).toBeInTheDocument();
     expect(within(card).getByText(/Timothy cannot ban this member/)).toBeInTheDocument();
+  });
+
+  it("names the server that is failing, and keeps its ID", async () => {
+    // Whoever reads this has to go and talk to somebody about it.
+    opsScreen({}, [
+      [],
+      [
+        {
+          guild_id: "100000000000000002",
+          guild_name: "Neon Atrium",
+          reason: "Timothy cannot ban this member",
+          count: 412,
+          latest_at: "2026-08-02T00:00:00Z",
+        },
+      ],
+    ]);
+
+    const card = await screen.findByRole("region", { name: "Failures" });
+    expect(await within(card).findByText("Neon Atrium")).toBeInTheDocument();
+    expect(within(card).getByText("100000000000000002")).toBeInTheDocument();
+  });
+
+  it("falls back to the ID for a server Timothy has left", async () => {
+    // Outcomes outlive the guild row on purpose, so these rows have no name to show.
+    opsScreen({}, [
+      [],
+      [
+        {
+          guild_id: "100000000000000002",
+          guild_name: null,
+          reason: "Timothy cannot ban this member",
+          count: 1,
+          latest_at: "2026-08-02T00:00:00Z",
+        },
+      ],
+    ]);
+
+    const card = await screen.findByRole("region", { name: "Failures" });
+    expect(await within(card).findByText("100000000000000002")).toBeInTheDocument();
   });
 
   it("says so when nothing is failing", async () => {

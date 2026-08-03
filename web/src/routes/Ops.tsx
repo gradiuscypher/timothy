@@ -14,11 +14,11 @@ import {
   Cell,
   Empty,
   ErrorNote,
+  GuildName,
   Loading,
   PageTitle,
   Row,
   Select,
-  Snowflake,
   Table,
   When,
 } from "@/components/ui";
@@ -268,7 +268,7 @@ function Failures() {
           {failures.data.map((group) => (
             <Row key={`${group.guild_id}-${group.reason ?? ""}`}>
               <Cell>
-                <Snowflake id={group.guild_id} />
+                <GuildName id={group.guild_id} name={group.guild_name} />
               </Cell>
               <Cell className="tabular-nums">{group.count}</Cell>
               <Cell className="text-surface-muted">{group.reason ?? "—"}</Cell>

@@ -131,11 +131,21 @@ class TimothyBot(discord.Client):
         log.info("connected as %s in %d guilds", self.user, len(self.guilds))
         if not self.intents.members:  # pragma: no cover — set in `intents()`
             log.warning("the members intent is off: joins will not be enforced at the door")
-        await relay.announce_guilds(self.api, [guild.id for guild in self.guilds])
+        await relay.announce_guilds(self.api, [(guild.id, guild.name) for guild in self.guilds])
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """Timothy was added to a guild."""
-        await relay.guild_joined(self.api, guild.id)
+        await relay.guild_joined(self.api, guild.id, guild.name)
+
+    async def on_guild_update(self, before: discord.Guild, after: discord.Guild) -> None:
+        """A guild changed. Only its name is Timothy's business.
+
+        `GUILD_UPDATE` fires for everything from a new banner to a changed verification
+        level, and the backend stores one field of a guild, so anything but a rename is
+        dropped here rather than relayed and ignored.
+        """
+        if before.name != after.name:
+            await relay.guild_renamed(self.api, after.id, after.name)
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
         """Timothy was removed from a guild."""

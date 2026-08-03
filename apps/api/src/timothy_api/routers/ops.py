@@ -219,22 +219,34 @@ async def read_failures(
     A `failed` outcome is not a failed job — it is a Discord call that retrying did not
     fix, which the sweep will try again when the world might have changed. Jobs are
     below, and are a different problem.
+
+    The guild's name comes from an outer join, because these rows deliberately outlive
+    the guild row: a guild Timothy has left still has failures worth reading, and it has
+    no name here.
     """
     rows = await session.execute(
         select(
             EnforcementOutcome.guild_id,
+            Guild.name,
             EnforcementOutcome.reason,
             func.count(),
             func.max(EnforcementOutcome.attempted_at),
         )
+        .outerjoin(Guild, Guild.guild_id == EnforcementOutcome.guild_id)
         .where(EnforcementOutcome.status == OutcomeStatus.FAILED)
-        .group_by(EnforcementOutcome.guild_id, EnforcementOutcome.reason)
+        .group_by(EnforcementOutcome.guild_id, Guild.name, EnforcementOutcome.reason)
         .order_by(func.count().desc())
         .limit(limit)
     )
     return [
-        FailureGroup(guild_id=guild_id, reason=reason, count=count, latest_at=latest)
-        for guild_id, reason, count, latest in rows
+        FailureGroup(
+            guild_id=guild_id,
+            guild_name=guild_name,
+            reason=reason,
+            count=count,
+            latest_at=latest,
+        )
+        for guild_id, guild_name, reason, count, latest in rows
     ]
 
 

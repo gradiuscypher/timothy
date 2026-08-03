@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 
 import { useMyGuilds, usePools, useSignedIn } from "@/api/hooks";
-import { Badge, Card, CardTitle, Empty, Loading, PageTitle, Snowflake } from "@/components/ui";
+import { Badge, Card, CardTitle, Empty, GuildName, Loading, PageTitle } from "@/components/ui";
 
 /**
  * What this person can do here, said plainly.
@@ -40,7 +40,7 @@ export function Home() {
                   params={{ guildId: guild.guild_id }}
                   className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-surface-2"
                 >
-                  <Snowflake id={guild.guild_id} />
+                  <GuildName id={guild.guild_id} name={guild.name} />
                   {guild.enforcement_paused ? <Badge tone="warn">paused</Badge> : null}
                 </Link>
               </li>

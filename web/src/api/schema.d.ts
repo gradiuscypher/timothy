@@ -322,6 +322,11 @@ export interface paths {
          *     Idempotent, because the bot re-announces its guilds every time the gateway
          *     reconnects. Only the first registration auto-subscribes; a guild that has since
          *     unsubscribed stays unsubscribed.
+         *
+         *     Re-registering is also how a name stays current: the announcement on every reconnect
+         *     carries whatever the guild is called now, and a rename relays through here too. A
+         *     body that names nothing leaves the stored name alone rather than clearing it — a
+         *     caller with no name to offer is not asserting that the guild has none.
          */
         put: operations["register_guild_guilds__guild_id__put"];
         post?: never;
@@ -638,6 +643,10 @@ export interface paths {
          *     A `failed` outcome is not a failed job — it is a Discord call that retrying did not
          *     fix, which the sweep will try again when the world might have changed. Jobs are
          *     below, and are a different problem.
+         *
+         *     The guild's name comes from an outer join, because these rows deliberately outlive
+         *     the guild row: a guild Timothy has left still has failures worth reading, and it has
+         *     no name here.
          */
         get: operations["read_failures_ops_failures_get"];
         put?: never;
@@ -835,6 +844,8 @@ export interface components {
         FailureGroup: {
             /** Guild Id */
             guild_id: string;
+            /** Guild Name */
+            guild_name: string | null;
             /** Reason */
             reason: string | null;
             /** Count */
@@ -865,6 +876,8 @@ export interface components {
         GuildRead: {
             /** Guild Id */
             guild_id: string;
+            /** Name */
+            name: string | null;
             /**
              * Joined At
              * Format: date-time
@@ -872,6 +885,18 @@ export interface components {
             joined_at: string;
             /** Enforcement Paused */
             enforcement_paused: boolean;
+        };
+        /**
+         * GuildRegister
+         * @description What the bot knows about a guild it has just seen on the gateway.
+         *
+         *     Only the name, and even that is optional: registration has to keep working for a
+         *     caller that sends no body at all, because that is what every deployed bot older than
+         *     this field does.
+         */
+        GuildRegister: {
+            /** Name */
+            name?: string | null;
         };
         /**
          * GuildUpdate
@@ -1813,7 +1838,11 @@ export interface operations {
                 timothy_session?: string | null;
             };
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["GuildRegister"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
