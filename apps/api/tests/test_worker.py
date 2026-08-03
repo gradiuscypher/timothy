@@ -25,7 +25,7 @@ from .conftest import (
     GUILD,
     GUILD_ADMIN,
     LISTED_USER,
-    POOL_ADMIN,
+    POOL_MANAGER,
     Enforcement,
     headers,
     insert_job,
@@ -148,7 +148,7 @@ def test_a_job_interrupted_by_a_crash_is_returned_to_the_queue(
     pool.post(
         "/pools/spam/listings",
         json={"user_id": str(LISTED_USER), "reason": "spam"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
     engine_rows = jobs_of(settings)
     assert engine_rows[0]["status"] == "pending"

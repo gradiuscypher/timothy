@@ -90,27 +90,30 @@ function Listings({ name }: { name: string }) {
 
   return (
     <Card label="Listings">
+      {/* Search sits up in the header, away from the add form. Side by side they read as
+          one thing, and people fill the search box on their way to adding a listing. */}
       <CardTitle
         action={
-          <span className="text-sm text-surface-muted">
-            {listings.data ? `${listings.data.total} listed` : null}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-sm whitespace-nowrap text-surface-muted">
+              {listings.data ? `${listings.data.total} listed` : null}
+            </span>
+            <Input
+              value={q}
+              onChange={(event) => search(event.target.value)}
+              aria-label="Search listings"
+              title="Matches the reason, or part of a user ID."
+              placeholder="Search listings"
+              type="search"
+              className="w-56"
+            />
+          </div>
         }
       >
         Listings
       </CardTitle>
 
-      <div className="mb-3 flex flex-wrap items-end gap-2">
-        <div className="min-w-56 grow">
-          <Field label="Search" hint="Matches the reason, or part of a user ID.">
-            <Input
-              value={q}
-              onChange={(event) => search(event.target.value)}
-              placeholder="ban evasion, or 4455190"
-              type="search"
-            />
-          </Field>
-        </div>
+      <div className="mb-3">
         <AddListing name={name} />
       </div>
 

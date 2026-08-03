@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from timothy_api.jobs import JobKind
 
-from .conftest import GUILD, GUILD_ADMIN, LISTED_USER, MEMBER, POOL_ADMIN, headers
+from .conftest import GUILD, GUILD_ADMIN, LISTED_USER, MEMBER, POOL_MANAGER, headers
 
 Enqueued = Callable[[], list[tuple[str, dict[str, int]]]]
 
@@ -39,7 +39,7 @@ def test_the_pools_owner_may_not_vouch_in_someone_elses_guild(
     registered: TestClient,
 ) -> None:
     response = registered.put(
-        f"/guilds/{GUILD}/exceptions/{LISTED_USER}", json={}, headers=headers(POOL_ADMIN)
+        f"/guilds/{GUILD}/exceptions/{LISTED_USER}", json={}, headers=headers(POOL_MANAGER)
     )
 
     assert response.status_code == 403

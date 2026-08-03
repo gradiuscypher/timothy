@@ -181,6 +181,10 @@ Check `.env`:
 - `TIMOTHY_DRY_RUN=true` — it fails safe, so anything unreadable also means on.
 - `TIMOTHY_AUTO_SUBSCRIBE_POOL` matches the `--global-pool` you imported with.
 - `TIMOTHY_MANAGEMENT_GUILD_ID` is the real one.
+- `TIMOTHY_POOL_MANAGER_ROLE_IDS` names a role that exists in that guild, and the people
+  who will run `/add_ban` on cutover day actually hold it. Administering the management
+  guild is not enough (ADR 0012), and unset means nobody can list anybody — a 403 on the
+  first `/add_ban`, which is a bad thing to discover mid-cutover.
 - `TIMOTHY_SYNC_COMMANDS` — irrelevant here, since the bot is not running.
 
 ### How long a round actually takes

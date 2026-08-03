@@ -64,7 +64,8 @@ classes are compatible, so `shadcn add` later drops in over the top rather than 
 
 | Setting | Default | Notes |
 | --- | --- | --- |
-| `MANAGEMENT_GUILD_ID` | — | Exactly one. Administrators here own pools and listings. |
+| `MANAGEMENT_GUILD_ID` | — | Exactly one. The guild pool authority is held in, and the guild you have to be a member of to sign in to the web UI at all (ADR 0013). Unset closes login too. |
+| `POOL_MANAGER_ROLE_IDS` | — | The roles there whose holders own pools and listings. Administering that guild is not enough, and unset closes pool management for everybody (ADR 0012). |
 | `OWNER_IDS` | — | Whoever runs the deployment. Gates `/ops` and nothing else. Unset closes it for everybody (ADR 0011). |
 | `DRY_RUN` | `true` | Fails safe — unparseable means on. |
 | `ENFORCEMENT_BURST_LIMIT` | `25` | Bans in one guild in one run before the breaker trips. Runtime-adjustable, not a redeploy. |
@@ -141,17 +142,23 @@ ADR 0010).
 
 | Operation | Requires |
 | --- | --- |
-| pools, listings | `ADMINISTRATOR` in the management guild |
+| pools, listings | a role named in `POOL_MANAGER_ROLE_IDS`, held in the management guild |
 | subscriptions, exceptions, notification channel | `ADMINISTRATOR` in the target guild |
 | reading pools and listings | membership of any guild the bot is in |
-| the audit log | `ADMINISTRATOR` in the management guild |
+| the audit log | a role named in `POOL_MANAGER_ROLE_IDS` |
 | the operations view | being named in `OWNER_IDS` |
 
-Every rule but the last is derived from Discord. The last one cannot be: "who runs this
-deployment" is not a fact Discord has. It is configuration sitting beside
-`MANAGEMENT_GUILD_ID` — which already decides who owns pools — and it only ever narrows,
-gating one read-only view more tightly than a derived rule could. ADR 0011 draws the line
-between that and the in-app RBAC ADR 0001 rejected.
+The first and last rules are configured as well as derived, and for related reasons. "Who
+runs this deployment" is not a fact Discord has at all. "Which role owns the pools" is a
+fact Discord holds but cannot be guessed — so the deployment names the role, and Discord
+still answers who holds it, live, on every request.
+
+Both only ever narrow. `ADMINISTRATOR` in the management guild is a permission for running
+a Discord server; deciding who gets banned from every subscribing guild is not the same
+job, and it should not arrive as a side effect of the first (ADR 0012). Neither setting
+falls back when unset: pool management and the operations view close rather than reverting
+to whoever used to have them. ADR 0011 draws the line between this and the in-app RBAC
+ADR 0001 rejected — what is stored is a configuration value, not a record of grants.
 
 ## Warn notifications
 

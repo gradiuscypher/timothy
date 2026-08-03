@@ -52,6 +52,26 @@ describe("the listing table", () => {
     expect(await screen.findByText("3076 listed")).toBeInTheDocument();
   });
 
+  it("keeps password managers out of every field", async () => {
+    // None of these is a credential, and an extension offering to save "ban evasion" as a
+    // password is both wrong and in the way. `autocomplete` alone does not stop them.
+    const { handler } = listingsEndpoint({
+      "|": { listings: [listing(1, "1000")], next_after_id: null, total: 1 },
+    });
+    server.use(get("/pools/spam", POOL), handler);
+
+    renderWithQuery(<PoolDetail name="spam" />);
+    await screen.findByText("1000");
+
+    const fields = screen.getAllByRole("textbox").concat(screen.getAllByRole("searchbox"));
+    expect(fields.length).toBeGreaterThan(0);
+    for (const field of fields) {
+      expect(field).toHaveAttribute("autocomplete", "off");
+      expect(field).toHaveAttribute("data-1p-ignore");
+      expect(field).toHaveAttribute("data-lpignore", "true");
+    }
+  });
+
   it("searches the backend rather than filtering what is on screen", async () => {
     // The page is 50 of several thousand rows. Filtering here would search the 50.
     const { handler, asked } = listingsEndpoint({

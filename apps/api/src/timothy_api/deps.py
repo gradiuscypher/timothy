@@ -114,6 +114,29 @@ def _scan_order(guild_ids: list[int], request: Request) -> list[int]:
     return [first, *(guild_id for guild_id in guild_ids if guild_id != first)]
 
 
+async def manages_pools(
+    settings: Settings, resolver: PermissionResolver, user_id: int | None
+) -> bool:
+    """Whether this user holds pool authority.
+
+    That is one of the configured roles, held in the management guild (ADR 0012).
+
+    Shared with `/auth/me`, which needs the same answer as a fact about the caller rather
+    than as a gate. Two implementations of one rule is how "no roles configured" ends up
+    meaning "closed" in one place and "open to administrators" in the other.
+
+    No roles configured is refused here, before Discord is asked. That ordering is the
+    point: there is no request path on which an empty setting reaches a permission check
+    that could answer `True`.
+    """
+    role_ids = settings.pool_manager_role_ids
+    if user_id is None or not role_ids:
+        return False
+    return await resolver.holds_any_role(
+        guild_id=settings.management_guild_id, role_ids=role_ids, user_id=user_id
+    )
+
+
 def _target_guild_id(request: Request) -> int:
     """The guild a request is about, taken from its path.
 
@@ -178,12 +201,12 @@ class Requires:
         if needed is Requirement.OWNER:
             return PermissionContext(actor=actor, owner=user_id in settings.owner_ids)
 
-        if needed is Requirement.MANAGEMENT_ADMIN:
+        # Pool authority is a role in the management guild, not Administrator there
+        # (ADR 0012).
+        if needed is Requirement.POOL_MANAGER:
             return PermissionContext(
                 actor=actor,
-                management_admin=await resolver.is_administrator(
-                    guild_id=settings.management_guild_id, user_id=user_id
-                ),
+                pool_manager=await manages_pools(settings, resolver, user_id),
             )
         if needed is Requirement.TARGET_GUILD_ADMIN:
             return PermissionContext(

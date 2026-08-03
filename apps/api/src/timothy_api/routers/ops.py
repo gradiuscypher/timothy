@@ -11,10 +11,10 @@ history, so grouping it by day would draw a confident chart of something that is
 true. Outcomes are counted here only as totals, which is what that table can honestly
 answer.
 
-Gated on the management guild's administrators, the same as the audit log. They are the
-people who own the pools, which is as close to "the operator" as ADR 0001's derived model
-gets — and inventing an owner list here would be the first authority Timothy stored
-rather than derived.
+Gated on `TIMOTHY_OWNER_IDS` alone (ADR 0011). This was first gated on the management
+guild's administrators, on the reasoning that they were as close to "the operator" as the
+derived model got; they are not. Running the deployment and curating the pools are
+different jobs, and since ADR 0012 they are not even the same permission.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -154,10 +154,15 @@ async def read_overview(
         enforcement_burst_limit=settings.enforcement_burst_limit,
         sweep_interval_seconds=settings.sweep_interval.total_seconds(),
         management_guild_id=settings.management_guild_id or None,
+        # The management guild is part of this: login requires membership of it
+        # (ADR 0013), so unset means `/auth/login` answers 503 like any other missing
+        # credential. Reporting "configured" for a login nobody can complete would make
+        # this line worse than not being here.
         login_configured=bool(
             settings.discord_client_id
             and settings.discord_client_secret.get_secret_value()
             and settings.public_base_url
+            and settings.management_guild_id
         ),
         counts=counts,
         queue=queue,

@@ -45,6 +45,18 @@ describe("the shell", () => {
     window.history.replaceState({}, "", "/");
   });
 
+  it("says what would change it when the login was refused at the door", async () => {
+    // A login from outside the management server is not a login to retry (ADR 0013), so
+    // it must not get the "please try again" message.
+    window.history.replaceState({}, "", "/?login=denied");
+    server.use(get("/auth/me", { detail: "no credentials" }, 401));
+
+    renderApp();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/management server/);
+    window.history.replaceState({}, "", "/");
+  });
+
   it("shows the pool screens to somebody who owns pools", async () => {
     server.use(get("/auth/me", SIGNED_IN), get("/guilds", []), get("/pools", []));
 

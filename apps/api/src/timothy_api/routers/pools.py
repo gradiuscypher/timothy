@@ -1,7 +1,8 @@
 """Pools: the named lists guilds subscribe to.
 
-Owned by the management guild's administrators (ADR 0001). Readable by anyone in a guild
-Timothy is in, which is the rule ADR 0001 expects to relax first.
+Owned by whoever holds a pool manager role in the management guild (ADR 0012), which is
+not the same people as that guild's administrators. Readable by anyone in a guild Timothy
+is in, which is the rule ADR 0001 expects to relax first.
 """
 
 from typing import Annotated

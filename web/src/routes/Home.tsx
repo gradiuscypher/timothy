@@ -65,8 +65,8 @@ function PoolList() {
   return (
     <>
       <p className="mb-3 text-sm text-surface-muted">
-        You administer the management server, so you own the pools and everything listed
-        on them.
+        You hold the pool manager role, so you own the pools and everything listed on
+        them.
       </p>
       {pools.isPending ? <Loading what="pools" /> : null}
       <ul className="space-y-1">
@@ -92,7 +92,8 @@ function PoolList() {
 function NotYourPools() {
   return (
     <p className="text-sm text-surface-muted">
-      Pools are owned by the administrators of the management server. You can still{" "}
+      Pools are owned by whoever holds the pool manager role in the management server —
+      administering that server is not enough. You can still{" "}
       <Link to="/users" className="text-accent underline">
         look up why a user is listed
       </Link>

@@ -12,10 +12,11 @@ from timothy_core.ports.fake import FakeDiscord
 from .conftest import (
     GUILD,
     GUILD_ADMIN,
+    MANAGEMENT_ADMIN,
     MANAGEMENT_GUILD,
     MEMBER,
     OUTSIDER,
-    POOL_ADMIN,
+    POOL_MANAGER,
     FakeOAuth,
     headers,
     sign_in,
@@ -27,7 +28,7 @@ Enqueued = Callable[[], list[tuple[str, dict[str, int]]]]
 def test_only_timothy_registers_a_guild(client: TestClient) -> None:
     """There is no human in the loop when the bot joins, and so no Discord permission to
     derive authority from."""
-    response = client.put(f"/guilds/{GUILD}", headers=headers(POOL_ADMIN))
+    response = client.put(f"/guilds/{GUILD}", headers=headers(POOL_MANAGER))
 
     assert response.status_code == 403
 
@@ -92,7 +93,7 @@ def test_a_registration_with_no_name_does_not_clear_the_stored_one(
 def test_joining_subscribes_the_guild_to_the_shared_pool(client: TestClient) -> None:
     """ADR 0002 keeps what the old bot did — every guild enforced `global` — while
     dropping the reserved name that made it impossible to leave."""
-    client.post("/pools", json={"name": "global"}, headers=headers(POOL_ADMIN))
+    client.post("/pools", json={"name": "global"}, headers=headers(POOL_MANAGER))
 
     client.put(f"/guilds/{GUILD}", headers=headers("system"))
 
@@ -107,7 +108,7 @@ def test_joining_subscribes_the_guild_to_the_shared_pool(client: TestClient) -> 
 def test_the_shared_subscription_is_attributed_to_timothy(client: TestClient) -> None:
     """Not to the magic user ID `"0"` the old bot used, which was indistinguishable from
     a real person (ADR 0006)."""
-    client.post("/pools", json={"name": "global"}, headers=headers(POOL_ADMIN))
+    client.post("/pools", json={"name": "global"}, headers=headers(POOL_MANAGER))
     client.put(f"/guilds/{GUILD}", headers=headers("system"))
 
     subscriptions = client.get(
@@ -119,7 +120,7 @@ def test_the_shared_subscription_is_attributed_to_timothy(client: TestClient) ->
 
 def test_the_shared_subscription_can_be_declined(client: TestClient) -> None:
     """The whole point of ADR 0002: it is an ordinary row, and the guild owns it."""
-    client.post("/pools", json={"name": "global"}, headers=headers(POOL_ADMIN))
+    client.post("/pools", json={"name": "global"}, headers=headers(POOL_MANAGER))
     client.put(f"/guilds/{GUILD}", headers=headers("system"))
 
     dropped = client.delete(
@@ -135,7 +136,7 @@ def test_the_shared_subscription_can_be_declined(client: TestClient) -> None:
 def test_a_reconnect_does_not_undo_that_decision(client: TestClient) -> None:
     """Only the first registration auto-subscribes. Re-subscribing every time the
     gateway blinked would make the opt-out meaningless."""
-    client.post("/pools", json={"name": "global"}, headers=headers(POOL_ADMIN))
+    client.post("/pools", json={"name": "global"}, headers=headers(POOL_MANAGER))
     client.put(f"/guilds/{GUILD}", headers=headers("system"))
     client.delete(f"/guilds/{GUILD}/subscriptions/global", headers=headers(GUILD_ADMIN))
 
@@ -160,7 +161,7 @@ def test_joining_with_no_shared_pool_yet_subscribes_to_nothing(
 def test_the_auto_subscription_enqueues_enforcement(
     client: TestClient, enqueued: Enqueued
 ) -> None:
-    pool = client.post("/pools", json={"name": "global"}, headers=headers(POOL_ADMIN)).json()
+    pool = client.post("/pools", json={"name": "global"}, headers=headers(POOL_MANAGER)).json()
 
     client.put(f"/guilds/{GUILD}", headers=headers("system"))
 
@@ -180,7 +181,7 @@ def test_auto_subscription_can_be_switched_off_entirely(
     without = settings.model_copy(update={"auto_subscribe_pool": ""})
 
     with TestClient(create_app(without, discord_port=discord)) as client:
-        client.post("/pools", json={"name": "global"}, headers=headers(POOL_ADMIN))
+        client.post("/pools", json={"name": "global"}, headers=headers(POOL_MANAGER))
         client.put(f"/guilds/{GUILD}", headers=headers("system"))
 
         assert (
@@ -269,12 +270,26 @@ def test_listing_guilds_returns_only_the_ones_the_caller_administers(
     assert [entry["guild_id"] for entry in listed] == [str(GUILD)]
 
 
-def test_a_pool_admin_sees_their_own_guild_and_not_everybody_elses(
+def test_a_pool_manager_administers_no_guild_and_so_lists_none(
     registered: TestClient,
 ) -> None:
     """Owning pools is authority over pools, not over the guilds that subscribe to them.
-    Their configuration stays their own business."""
-    listed = registered.get("/guilds", headers=headers(POOL_ADMIN)).json()
+    Their configuration stays their own business.
+
+    Since ADR 0012 the pool manager role carries no Discord permissions at all, so the
+    list is empty rather than just short — which is the sharper version of the same
+    point. The guild that does show up here is the one you administer, below."""
+    listed = registered.get("/guilds", headers=headers(POOL_MANAGER)).json()
+
+    assert listed == []
+
+
+def test_a_management_administrator_lists_the_management_guild(
+    registered: TestClient,
+) -> None:
+    """The other side of the split: they administer that guild, so it is theirs to
+    configure — and pools are still not (ADR 0012)."""
+    listed = registered.get("/guilds", headers=headers(MANAGEMENT_ADMIN)).json()
 
     assert [entry["guild_id"] for entry in listed] == [str(MANAGEMENT_GUILD)]
 
@@ -295,11 +310,19 @@ def test_a_browser_is_only_asked_about_the_guilds_discord_named(
     registered: TestClient, oauth: FakeOAuth, discord: FakeDiscord
 ) -> None:
     """The candidates are the login snapshot intersected with Timothy's guilds. Without
-    that, a person in one server would cost a resolved permission for all 123."""
-    sign_in(registered, oauth, user_id=GUILD_ADMIN, guild_ids=(GUILD,))
+    that, a person in one server would cost a resolved permission for all 123.
+
+    Every snapshot names the management guild — that is the price of a session at all
+    (ADR 0013) — so this one is narrowed down to exactly that. The guild this person
+    actually administers is not in the snapshot and is never asked about, which is the
+    same edge ADR 0010 records: a guild Timothy joins after somebody logs in is invisible
+    to them until they log in again.
+    """
+    sign_in(registered, oauth, user_id=GUILD_ADMIN, guild_ids=(MANAGEMENT_GUILD,))
     discord.calls.clear()
 
     listed = registered.get("/guilds").json()
 
-    assert [entry["guild_id"] for entry in listed] == [str(GUILD)]
-    assert [call.guild_id for call in discord.calls_of("guild_permissions")] == [GUILD]
+    assert listed == []
+    permissions_asked = [call.guild_id for call in discord.calls_of("guild_permissions")]
+    assert permissions_asked == [MANAGEMENT_GUILD]

@@ -24,7 +24,7 @@ from .conftest import (
     GUILD_ADMIN,
     LISTED_USER,
     OTHER_GUILD,
-    POOL_ADMIN,
+    POOL_MANAGER,
     Enforcement,
     headers,
     jobs_of,
@@ -70,7 +70,7 @@ def add_listing(client: TestClient, user_id: int, reason: str = "raiding") -> No
     response = client.post(
         "/pools/spam/listings",
         json={"user_id": str(user_id), "reason": reason},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
     assert response.status_code == 201
 
@@ -84,7 +84,7 @@ def set_channel(client: TestClient, guild_id: int = GUILD) -> None:
 
 
 def audit_actions(client: TestClient) -> list[str]:
-    entries = client.get("/audit-log", headers=headers(POOL_ADMIN)).json()
+    entries = client.get("/audit-log", headers=headers(POOL_MANAGER)).json()
     return [entry["action"] for entry in entries]
 
 
@@ -146,7 +146,7 @@ def test_timothys_ban_is_in_the_audit_log_as_timothys(
 
     enforcement.drain()
 
-    entries = pool.get("/audit-log", headers=headers(POOL_ADMIN)).json()
+    entries = pool.get("/audit-log", headers=headers(POOL_MANAGER)).json()
     ban = next(
         entry for entry in entries if entry["action"] == AuditAction.ENFORCEMENT_BAN.value
     )
@@ -308,7 +308,7 @@ def test_a_ban_level_pool_silences_a_warn_level_one(
     """The warn copy describes a counterfactual, and once the user is banned it is not
     counterfactual any more."""
     set_channel(pool)
-    pool.post("/pools", json={"name": "raiders"}, headers=headers(POOL_ADMIN))
+    pool.post("/pools", json={"name": "raiders"}, headers=headers(POOL_MANAGER))
     subscribe(pool, GUILD, level="warn")
     subscribe(pool, GUILD, level="ban", pool="raiders")
     discord.add_member(GUILD, LISTED_USER)
@@ -317,7 +317,7 @@ def test_a_ban_level_pool_silences_a_warn_level_one(
     pool.post(
         "/pools/raiders/listings",
         json={"user_id": str(LISTED_USER), "reason": "raiding"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
     enforcement.drain()
 

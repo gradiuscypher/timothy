@@ -1,15 +1,24 @@
 """Who may do what. The only place that answers it (ADR 0001).
 
-Authority is *derived* from Discord rather than stored: holding `ADMINISTRATOR` in the
-management guild owns pools and listings, holding it in a target guild owns that guild's
-subscriptions, exceptions and notification channel. ADR 0001 anticipates relaxing one of
-these — looking up why a user is listed should eventually be open to a subscribing
-guild's own moderators — and asks that it be a change to one rule rather than a hunt
-through handlers. So the rules are a table, and the handlers name an :class:`Operation`.
+Authority is *derived* from Discord rather than stored: holding a configured role in the
+management guild owns pools and listings, holding `ADMINISTRATOR` in a target guild owns
+that guild's subscriptions, exceptions and notification channel. ADR 0001 anticipates
+relaxing one of these — looking up why a user is listed should eventually be open to a
+subscribing guild's own moderators — and asks that it be a change to one rule rather than
+a hunt through handlers. So the rules are a table, and the handlers name an
+:class:`Operation`. Narrowing pool management from the management guild's administrators
+to a role of its own (ADR 0012) was that promise being kept: two lines of this table.
 
-One rule is not derived from Discord, and is marked as such: `OWNER` names whoever runs
-this deployment, because that is not a fact Discord has (ADR 0011). It is configuration
-sitting beside `MANAGEMENT_GUILD_ID`, and it only ever narrows.
+Both halves of the split are deliberate and they are not the same rule. Pool authority is
+one role in one guild, because a listing bans people everywhere. Guild authority is
+Administrator in the guild the request names, because a subscription only ever binds the
+guild that holds it — so a guild's own administrators keep it, whatever the pool side is
+configured to.
+
+Two rules are only half Discord's answer, and are marked as such. `OWNER` names whoever
+runs this deployment, which is not a fact Discord has at all (ADR 0011). `POOL_MANAGER`
+asks Discord whether someone holds a role, but *which* role is configuration. Both sit
+beside `MANAGEMENT_GUILD_ID`, and both only ever narrow.
 
 The table is also read *before* anything is resolved. Each requirement says which single
 fact about the caller has to be established, so a request that only needs the management
@@ -53,8 +62,19 @@ class Operation(StrEnum):
 class Requirement(StrEnum):
     """The one fact that has to be true for an operation to be allowed."""
 
-    MANAGEMENT_ADMIN = "management_admin"
-    """`ADMINISTRATOR` in the management guild."""
+    POOL_MANAGER = "pool_manager"
+    """Holds one of `POOL_MANAGER_ROLE_IDS` in the management guild (ADR 0012).
+
+    Administering the management guild is not this. The guild's administrators run a
+    Discord server; pool managers decide who every subscribing guild bans, and that is a
+    larger blast radius than "can edit channels here". An administrator who needs it
+    grants themselves the role — they always can — and that grant is a deliberate,
+    visible act rather than a side effect of a Discord permission.
+
+    Unconfigured closes pool management for everybody, exactly as `OWNER` does for the
+    operations view, and for the same reason: falling back to the administrators would
+    silently undo the separation this exists to draw.
+    """
 
     TARGET_GUILD_ADMIN = "target_guild_admin"
     """`ADMINISTRATOR` in the guild the request names."""
@@ -81,9 +101,11 @@ class Requirement(StrEnum):
 
 
 REQUIREMENTS: Final[Mapping[Operation, Requirement]] = {
-    Operation.MANAGE_POOLS: Requirement.MANAGEMENT_ADMIN,
-    Operation.MANAGE_LISTINGS: Requirement.MANAGEMENT_ADMIN,
-    Operation.READ_AUDIT_LOG: Requirement.MANAGEMENT_ADMIN,
+    Operation.MANAGE_POOLS: Requirement.POOL_MANAGER,
+    Operation.MANAGE_LISTINGS: Requirement.POOL_MANAGER,
+    # The audit log is mostly the record of the two operations above, so it follows them:
+    # the people who can list a user are the people who review the listing.
+    Operation.READ_AUDIT_LOG: Requirement.POOL_MANAGER,
     # The operator's view of Timothy itself: the queue, what is failing everywhere, what
     # the settings actually are. Administering the pool server does not make somebody the
     # person running the deployment, and this is the one screen where that distinction is
@@ -120,7 +142,7 @@ class PermissionContext:
     """
 
     actor: Actor
-    management_admin: bool = False
+    pool_manager: bool = False
     target_guild_admin: bool = False
     any_guild_member: bool = False
     owner: bool = False
@@ -145,7 +167,7 @@ def allows(operation: Operation, context: PermissionContext) -> bool:
     if needed is Requirement.SYSTEM:
         return False
     return {
-        Requirement.MANAGEMENT_ADMIN: context.management_admin,
+        Requirement.POOL_MANAGER: context.pool_manager,
         Requirement.TARGET_GUILD_ADMIN: context.target_guild_admin,
         Requirement.ANY_GUILD_MEMBER: context.any_guild_member,
         Requirement.OWNER: context.owner,

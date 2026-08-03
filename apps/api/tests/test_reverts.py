@@ -21,7 +21,7 @@ from .conftest import (
     GUILD,
     GUILD_ADMIN,
     LISTED_USER,
-    POOL_ADMIN,
+    POOL_MANAGER,
     Enforcement,
     headers,
     outcomes_of,
@@ -41,7 +41,7 @@ def banned_by_timothy(
     client.post(
         f"/pools/{pool}/listings",
         json={"user_id": str(LISTED_USER), "reason": "raiding"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
     enforcement.drain()
     assert discord.is_banned(GUILD, LISTED_USER)
@@ -55,7 +55,7 @@ def test_removing_a_listing_leaves_the_ban_by_default(
 ) -> None:
     banned_by_timothy(pool, discord, enforcement)
 
-    pool.delete(f"/pools/spam/listings/{LISTED_USER}", headers=headers(POOL_ADMIN))
+    pool.delete(f"/pools/spam/listings/{LISTED_USER}", headers=headers(POOL_MANAGER))
     enforcement.drain()
 
     assert discord.is_banned(GUILD, LISTED_USER)
@@ -66,7 +66,9 @@ def test_removing_a_listing_with_revert_lifts_the_ban(
 ) -> None:
     banned_by_timothy(pool, discord, enforcement)
 
-    pool.delete(f"/pools/spam/listings/{LISTED_USER}?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete(
+        f"/pools/spam/listings/{LISTED_USER}?revert=true", headers=headers(POOL_MANAGER)
+    )
     enforcement.drain()
 
     assert not discord.is_banned(GUILD, LISTED_USER)
@@ -90,7 +92,7 @@ def test_deleting_a_pool_with_revert_lifts_its_bans_everywhere(
     """The outcomes outlive the pool precisely so this can find them (ADR 0005)."""
     banned_by_timothy(pool, discord, enforcement)
 
-    pool.delete("/pools/spam?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete("/pools/spam?revert=true", headers=headers(POOL_MANAGER))
     enforcement.drain()
 
     assert not discord.is_banned(GUILD, LISTED_USER)
@@ -112,13 +114,15 @@ def test_a_guilds_own_ban_is_never_lifted(
     pool.post(
         "/pools/spam/listings",
         json={"user_id": str(LISTED_USER), "reason": "raiding"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
     enforcement.drain()
     # The guild banned them itself, before Timothy ever saw them.
     discord.guilds[GUILD].bans[LISTED_USER] = "we banned this person ourselves"
 
-    pool.delete(f"/pools/spam/listings/{LISTED_USER}?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete(
+        f"/pools/spam/listings/{LISTED_USER}?revert=true", headers=headers(POOL_MANAGER)
+    )
     enforcement.drain()
 
     assert discord.is_banned(GUILD, LISTED_USER)
@@ -136,7 +140,7 @@ def test_a_ban_another_live_listing_still_justifies_stays(
     them, so enforcement there correctly decided nothing. Asking the listings rather than
     the outcomes is what makes this case come out right.
     """
-    pool.post("/pools", json={"name": "raiders"}, headers=headers(POOL_ADMIN))
+    pool.post("/pools", json={"name": "raiders"}, headers=headers(POOL_MANAGER))
     banned_by_timothy(pool, discord, enforcement)
     pool.put(
         f"/guilds/{GUILD}/subscriptions/raiders",
@@ -146,11 +150,13 @@ def test_a_ban_another_live_listing_still_justifies_stays(
     pool.post(
         "/pools/raiders/listings",
         json={"user_id": str(LISTED_USER), "reason": "also raiding"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
     enforcement.drain()
 
-    pool.delete(f"/pools/spam/listings/{LISTED_USER}?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete(
+        f"/pools/spam/listings/{LISTED_USER}?revert=true", headers=headers(POOL_MANAGER)
+    )
     enforcement.drain()
 
     assert discord.is_banned(GUILD, LISTED_USER)
@@ -164,7 +170,7 @@ def test_a_lifted_ban_leaves_no_attribution_behind(
     """A surviving `banned` row would have a later revert unban somebody already back."""
     banned_by_timothy(pool, discord, enforcement)
 
-    pool.delete("/pools/spam?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete("/pools/spam?revert=true", headers=headers(POOL_MANAGER))
     enforcement.drain()
 
     assert [row for row in outcomes_of(settings) if row["status"] == "banned"] == []
@@ -175,10 +181,10 @@ def test_reverting_is_recorded_in_the_audit_log(
 ) -> None:
     banned_by_timothy(pool, discord, enforcement)
 
-    pool.delete("/pools/spam?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete("/pools/spam?revert=true", headers=headers(POOL_MANAGER))
     enforcement.drain()
 
-    entries = pool.get("/audit-log", headers=headers(POOL_ADMIN)).json()
+    entries = pool.get("/audit-log", headers=headers(POOL_MANAGER)).json()
     revert = next(
         entry for entry in entries if entry["action"] == AuditAction.ENFORCEMENT_REVERT.value
     )
@@ -255,12 +261,12 @@ def test_an_unban_discord_refuses_keeps_the_attribution(
         "unban", guild_id=GUILD, user_id=LISTED_USER, error=ForbiddenError("no rights")
     )
 
-    pool.delete("/pools/spam?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete("/pools/spam?revert=true", headers=headers(POOL_MANAGER))
     enforcement.drain()
 
     assert discord.is_banned(GUILD, LISTED_USER)
     assert [row["status"] for row in outcomes_of(settings)] == [OutcomeStatus.BANNED.value]
-    entries = pool.get("/audit-log", headers=headers(POOL_ADMIN)).json()
+    entries = pool.get("/audit-log", headers=headers(POOL_MANAGER)).json()
     failure = next(
         entry for entry in entries if entry["action"] == AuditAction.ENFORCEMENT_FAILED.value
     )
@@ -275,7 +281,7 @@ def test_a_ban_somebody_else_already_lifted_still_clears_the_attribution(
     banned_by_timothy(pool, discord, enforcement)
     del discord.guilds[GUILD].bans[LISTED_USER]  # a moderator got there first
 
-    pool.delete("/pools/spam?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete("/pools/spam?revert=true", headers=headers(POOL_MANAGER))
     enforcement.drain()
 
     assert outcomes_of(settings) == []
@@ -315,7 +321,7 @@ def test_a_revert_works_even_while_the_guild_is_paused(
         f"/guilds/{GUILD}", json={"enforcement_paused": True}, headers=headers(GUILD_ADMIN)
     )
 
-    pool.delete("/pools/spam?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete("/pools/spam?revert=true", headers=headers(POOL_MANAGER))
     enforcement.drain()
 
     assert not discord.is_banned(GUILD, LISTED_USER)

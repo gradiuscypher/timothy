@@ -28,9 +28,9 @@ def test_every_operation_has_a_rule() -> None:
 @pytest.mark.parametrize(
     ("operation", "expected"),
     [
-        (Operation.MANAGE_POOLS, Requirement.MANAGEMENT_ADMIN),
-        (Operation.MANAGE_LISTINGS, Requirement.MANAGEMENT_ADMIN),
-        (Operation.READ_AUDIT_LOG, Requirement.MANAGEMENT_ADMIN),
+        (Operation.MANAGE_POOLS, Requirement.POOL_MANAGER),
+        (Operation.MANAGE_LISTINGS, Requirement.POOL_MANAGER),
+        (Operation.READ_AUDIT_LOG, Requirement.POOL_MANAGER),
         (Operation.READ_POOLS, Requirement.ANY_GUILD_MEMBER),
         (Operation.MANAGE_SUBSCRIPTIONS, Requirement.TARGET_GUILD_ADMIN),
         (Operation.MANAGE_EXCEPTIONS, Requirement.TARGET_GUILD_ADMIN),
@@ -46,11 +46,14 @@ def test_the_authorization_table_matches_plan_md(
     assert requirement(operation) is expected
 
 
-def test_management_admin_owns_pools_and_nothing_else() -> None:
-    context = PermissionContext(actor=USER, management_admin=True)
+def test_the_pool_manager_role_owns_pools_and_nothing_else() -> None:
+    """Including nothing in the management guild itself: the role is authority over the
+    pools, not over the guild those pools happen to live in (ADR 0012)."""
+    context = PermissionContext(actor=USER, pool_manager=True)
 
     assert allows(Operation.MANAGE_POOLS, context)
     assert allows(Operation.MANAGE_LISTINGS, context)
+    assert allows(Operation.READ_AUDIT_LOG, context)
     assert not allows(Operation.MANAGE_SUBSCRIPTIONS, context)
     assert not allows(Operation.READ_POOLS, context)
 
@@ -95,10 +98,10 @@ def test_the_system_actor_may_only_do_its_own_work() -> None:
 
 
 def test_a_human_may_not_do_the_system_s_work() -> None:
-    """Even a management administrator: guild registration follows the bot joining, and
-    a human asserting it would be asserting something untrue."""
+    """Even a pool manager: guild registration follows the bot joining, and a human
+    asserting it would be asserting something untrue."""
     context = PermissionContext(
-        actor=USER, management_admin=True, target_guild_admin=True, any_guild_member=True
+        actor=USER, pool_manager=True, target_guild_admin=True, any_guild_member=True
     )
 
     assert not allows(Operation.REGISTER_GUILD, context)

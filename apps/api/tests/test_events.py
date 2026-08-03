@@ -19,7 +19,7 @@ from .conftest import (
     GUILD_ADMIN,
     LISTED_USER,
     MEMBER,
-    POOL_ADMIN,
+    POOL_MANAGER,
     Enforcement,
     headers,
     outcomes_of,
@@ -45,7 +45,7 @@ def subscribe_and_list(client: TestClient, discord: FakeDiscord) -> None:
     client.post(
         "/pools/spam/listings",
         json={"user_id": str(LISTED_USER), "reason": "raiding"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
 
 
@@ -60,7 +60,7 @@ def test_only_the_system_actor_may_relay_events(registered: TestClient) -> None:
     """A gateway event is something that happened, not something anyone asked for. A
     human asserting one would be asserting something untrue — and the exception this can
     create is Timothy's own, which no human route may produce."""
-    for actor in (POOL_ADMIN, GUILD_ADMIN, MEMBER):
+    for actor in (POOL_MANAGER, GUILD_ADMIN, MEMBER):
         response = registered.post(
             "/events/member-join",
             json={"guild_id": str(GUILD), "user_id": str(LISTED_USER)},
@@ -157,7 +157,7 @@ def test_an_unban_of_a_user_listed_in_an_unsubscribed_pool_creates_nothing(
     pool.post(
         "/pools/spam/listings",
         json={"user_id": str(LISTED_USER), "reason": "raiding"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
 
     assert "no exception" in event(pool, "ban-remove")["action"]
@@ -205,7 +205,9 @@ def test_the_marker_answers_for_one_event_only(
     subscribe_and_list(pool, discord)
     discord.add_member(GUILD, LISTED_USER)
     enforcement.drain()
-    pool.delete(f"/pools/spam/listings/{LISTED_USER}?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete(
+        f"/pools/spam/listings/{LISTED_USER}?revert=true", headers=headers(POOL_MANAGER)
+    )
     enforcement.drain()
     event(pool, "ban-remove")
 

@@ -25,7 +25,7 @@ from .conftest import (
     GUILD,
     GUILD_ADMIN,
     LISTED_USER,
-    POOL_ADMIN,
+    POOL_MANAGER,
     Enforcement,
     headers,
     outcomes_of,
@@ -38,7 +38,7 @@ def settings_overrides() -> dict[str, Any]:
 
 
 def dry_run_entries(client: TestClient) -> list[dict[str, Any]]:
-    entries = client.get("/audit-log", headers=headers(POOL_ADMIN)).json()
+    entries = client.get("/audit-log", headers=headers(POOL_MANAGER)).json()
     return [
         entry for entry in entries if entry["action"] == AuditAction.ENFORCEMENT_DRY_RUN.value
     ]
@@ -54,7 +54,7 @@ def listed_and_subscribed(client: TestClient, discord: FakeDiscord, level: str =
     client.post(
         "/pools/spam/listings",
         json={"user_id": str(LISTED_USER), "reason": "raiding"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
 
 
@@ -160,7 +160,7 @@ def test_a_revert_is_described_rather_than_issued(
     live.drain()
     assert discord.is_banned(GUILD, LISTED_USER)
 
-    pool.delete("/pools/spam?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete("/pools/spam?revert=true", headers=headers(POOL_MANAGER))
     enforcement.drain()
 
     assert discord.is_banned(GUILD, LISTED_USER)
@@ -179,7 +179,7 @@ def test_the_attribution_survives_a_frozen_revert(
     listed_and_subscribed(pool, discord)
     live.drain()
 
-    pool.delete("/pools/spam?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete("/pools/spam?revert=true", headers=headers(POOL_MANAGER))
     enforcement.drain()
 
     assert [row["status"] for row in outcomes_of(settings)] == ["banned"]
@@ -196,7 +196,7 @@ def test_the_breaker_still_halts_but_does_not_pause_real_guilds(
         pool.post(
             "/pools/spam/listings",
             json={"user_id": str(user_id), "reason": "bulk"},
-            headers=headers(POOL_ADMIN),
+            headers=headers(POOL_MANAGER),
         )
     enforcement.drain()
 
@@ -209,7 +209,7 @@ def test_the_breaker_still_halts_but_does_not_pause_real_guilds(
     )
     enforcement.drain()
 
-    entries = pool.get("/audit-log", headers=headers(POOL_ADMIN)).json()
+    entries = pool.get("/audit-log", headers=headers(POOL_MANAGER)).json()
     tripped = next(
         entry
         for entry in entries

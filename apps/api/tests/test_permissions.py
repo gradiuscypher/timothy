@@ -12,7 +12,17 @@ from timothy_api.permissions import PermissionResolver, TtlCache
 from timothy_core.ports.discord import DiscordUnavailableError, GuildPermissions
 from timothy_core.ports.fake import FakeDiscord
 
-from .conftest import GUILD, GUILD_ADMIN, MANAGEMENT_GUILD, MEMBER, OTHER_GUILD, OUTSIDER
+from .conftest import (
+    GUILD,
+    GUILD_ADMIN,
+    MANAGEMENT_ADMIN,
+    MANAGEMENT_GUILD,
+    MEMBER,
+    OTHER_GUILD,
+    OUTSIDER,
+    POOL_MANAGER,
+    POOL_MANAGER_ROLE,
+)
 
 TTL = timedelta(seconds=60)
 
@@ -191,3 +201,92 @@ async def test_the_scan_still_asks_in_the_order_it_was_given(discord: FakeDiscor
     )
 
     assert [call.guild_id for call in discord.calls_of("fetch_member")] == [GUILD]
+
+
+@pytest.mark.anyio
+async def test_a_role_holder_resolves_once(discord: FakeDiscord) -> None:
+    resolver = PermissionResolver(discord, ttl=TTL, clock=Clock())
+    roles = frozenset({POOL_MANAGER_ROLE})
+
+    assert await resolver.holds_any_role(
+        guild_id=MANAGEMENT_GUILD, role_ids=roles, user_id=POOL_MANAGER
+    )
+    assert await resolver.holds_any_role(
+        guild_id=MANAGEMENT_GUILD, role_ids=roles, user_id=POOL_MANAGER
+    )
+
+    assert len(discord.calls_of("fetch_member")) == 1
+
+
+@pytest.mark.anyio
+async def test_a_member_of_the_management_guild_without_the_role_does_not_hold_it(
+    discord: FakeDiscord,
+) -> None:
+    """MANAGEMENT_ADMIN administers that guild and holds no role in it. Being able to
+    configure the guild is not being able to manage the pools (ADR 0012)."""
+    resolver = PermissionResolver(discord, ttl=TTL, clock=Clock())
+
+    assert not await resolver.holds_any_role(
+        guild_id=MANAGEMENT_GUILD,
+        role_ids=frozenset({POOL_MANAGER_ROLE}),
+        user_id=MANAGEMENT_ADMIN,
+    )
+
+
+@pytest.mark.anyio
+async def test_someone_outside_the_management_guild_holds_nothing_in_it(
+    discord: FakeDiscord,
+) -> None:
+    """A non-member and a member with no roles want no distinguishing: neither may
+    manage pools."""
+    resolver = PermissionResolver(discord, ttl=TTL, clock=Clock())
+
+    assert not await resolver.holds_any_role(
+        guild_id=MANAGEMENT_GUILD,
+        role_ids=frozenset({POOL_MANAGER_ROLE}),
+        user_id=OUTSIDER,
+    )
+
+
+@pytest.mark.anyio
+async def test_roles_are_cached_but_the_question_asked_of_them_is_not(
+    discord: FakeDiscord,
+) -> None:
+    """The cache holds the roles the member *has*, not the answer to one configuration's
+    question. So adding a role to `POOL_MANAGER_ROLE_IDS` takes effect on the next
+    request rather than at the end of a TTL nobody can see."""
+    resolver = PermissionResolver(discord, ttl=TTL, clock=Clock())
+    other_role = 500_000_000_000_000_002
+
+    assert not await resolver.holds_any_role(
+        guild_id=MANAGEMENT_GUILD, role_ids=frozenset({other_role}), user_id=POOL_MANAGER
+    )
+    assert await resolver.holds_any_role(
+        guild_id=MANAGEMENT_GUILD,
+        role_ids=frozenset({other_role, POOL_MANAGER_ROLE}),
+        user_id=POOL_MANAGER,
+    )
+
+    assert len(discord.calls_of("fetch_member")) == 1
+
+
+@pytest.mark.anyio
+async def test_discord_being_down_is_not_a_denial_of_the_role_either(
+    discord: FakeDiscord,
+) -> None:
+    """Same reasoning as the administrator lookup above: a pool manager told "not
+    permitted" goes and checks their roles, and finds nothing wrong with them."""
+    discord.fail(
+        "fetch_member",
+        guild_id=MANAGEMENT_GUILD,
+        user_id=POOL_MANAGER,
+        error=DiscordUnavailableError("down"),
+    )
+    resolver = PermissionResolver(discord, ttl=TTL, clock=Clock())
+
+    with pytest.raises(DiscordUnavailableError):
+        await resolver.holds_any_role(
+            guild_id=MANAGEMENT_GUILD,
+            role_ids=frozenset({POOL_MANAGER_ROLE}),
+            user_id=POOL_MANAGER,
+        )

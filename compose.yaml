@@ -15,6 +15,11 @@ services:
       TIMOTHY_DISCORD_TOKEN: ${TIMOTHY_DISCORD_TOKEN:?set TIMOTHY_DISCORD_TOKEN in .env}
       TIMOTHY_INTERNAL_TOKEN: ${TIMOTHY_INTERNAL_TOKEN:?set TIMOTHY_INTERNAL_TOKEN in .env}
       TIMOTHY_MANAGEMENT_GUILD_ID: ${TIMOTHY_MANAGEMENT_GUILD_ID:?set TIMOTHY_MANAGEMENT_GUILD_ID in .env}
+      # The role in the management guild that owns pools and listings (ADR 0012). Unset
+      # closes pool management for everybody rather than falling back to that guild's
+      # administrators — running a Discord server and curating the ban lists are
+      # different jobs.
+      TIMOTHY_POOL_MANAGER_ROLE_IDS: ${TIMOTHY_POOL_MANAGER_ROLE_IDS:-}
       # Whoever runs this deployment (ADR 0011). Unset closes the operations view for
       # everybody rather than falling back to the management guild's administrators.
       TIMOTHY_OWNER_IDS: ${TIMOTHY_OWNER_IDS:-}

@@ -16,14 +16,19 @@ from timothy_core.ports.discord import (
 )
 from timothy_core.ports.fake import FakeDiscord
 
-from .conftest import MANAGEMENT_GUILD, POOL_ADMIN, headers
+from .conftest import MANAGEMENT_GUILD, POOL_MANAGER, headers
 
 
 def failing(discord: FakeDiscord, error: Exception) -> None:
+    """Break the lookup that authorizing a pool call makes.
+
+    That is `fetch_member` rather than `guild_permissions`: pool authority is a role in
+    the management guild, and roles are read off the member (ADR 0012).
+    """
     discord.fail(
-        "guild_permissions",
+        "fetch_member",
         guild_id=MANAGEMENT_GUILD,
-        user_id=POOL_ADMIN,
+        user_id=POOL_MANAGER,
         error=error,  # ty: ignore[invalid-argument-type]
     )
 
@@ -31,7 +36,7 @@ def failing(discord: FakeDiscord, error: Exception) -> None:
 def test_discord_being_down_is_a_503(client: TestClient, discord: FakeDiscord) -> None:
     failing(discord, DiscordUnavailableError("down"))
 
-    response = client.post("/pools", json={"name": "spam"}, headers=headers(POOL_ADMIN))
+    response = client.post("/pools", json={"name": "spam"}, headers=headers(POOL_MANAGER))
 
     assert response.status_code == 503
 
@@ -41,7 +46,7 @@ def test_a_rate_limit_is_a_429_that_says_how_long(
 ) -> None:
     failing(discord, RateLimitedError(retry_after=2.5))
 
-    response = client.post("/pools", json={"name": "spam"}, headers=headers(POOL_ADMIN))
+    response = client.post("/pools", json={"name": "spam"}, headers=headers(POOL_MANAGER))
 
     assert response.status_code == 429
     assert response.headers["Retry-After"] == "3"
@@ -52,7 +57,7 @@ def test_any_other_discord_refusal_is_a_502(client: TestClient, discord: FakeDis
     cannot act."""
     failing(discord, ForbiddenError("timothy cannot see that guild"))
 
-    response = client.post("/pools", json={"name": "spam"}, headers=headers(POOL_ADMIN))
+    response = client.post("/pools", json={"name": "spam"}, headers=headers(POOL_MANAGER))
 
     assert response.status_code == 502
 

@@ -20,7 +20,7 @@ from .conftest import (
     CHANNEL,
     GUILD,
     GUILD_ADMIN,
-    POOL_ADMIN,
+    POOL_MANAGER,
     Enforcement,
     headers,
     outcomes_of,
@@ -48,7 +48,7 @@ def crowded(pool: TestClient, discord: FakeDiscord, enforcement: Enforcement) ->
         response = pool.post(
             "/pools/spam/listings",
             json={"user_id": str(user_id), "reason": "bulk import"},
-            headers=headers(POOL_ADMIN),
+            headers=headers(POOL_MANAGER),
         )
         assert response.status_code == 201
     enforcement.drain()
@@ -79,7 +79,7 @@ def test_the_threshold_is_per_run(
         pool.post(
             "/pools/spam/listings",
             json={"user_id": str(user_id), "reason": "one at a time"},
-            headers=headers(POOL_ADMIN),
+            headers=headers(POOL_MANAGER),
         )
         enforcement.drain()
 
@@ -154,7 +154,7 @@ def test_tripping_is_recorded_and_the_guild_is_told(
     subscribe(crowded)
     enforcement.drain()
 
-    entries = crowded.get("/audit-log", headers=headers(POOL_ADMIN)).json()
+    entries = crowded.get("/audit-log", headers=headers(POOL_MANAGER)).json()
     tripped = next(
         entry
         for entry in entries

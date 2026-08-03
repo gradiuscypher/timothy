@@ -94,9 +94,15 @@ class FakeDiscord:
         *,
         display_name: str = "member",
         permissions: GuildPermissions | None = None,
+        role_ids: frozenset[int] | None = None,
     ) -> Member:
-        """Put a user in a guild, optionally with permissions."""
-        member = Member(guild_id=guild_id, user_id=user_id, display_name=display_name)
+        """Put a user in a guild, optionally with permissions and roles."""
+        member = Member(
+            guild_id=guild_id,
+            user_id=user_id,
+            display_name=display_name,
+            role_ids=role_ids or frozenset(),
+        )
         guild = self._guild(guild_id)
         guild.members[user_id] = member
         guild.permissions[user_id] = permissions or GuildPermissions.none()

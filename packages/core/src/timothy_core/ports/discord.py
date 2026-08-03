@@ -15,8 +15,9 @@ from dataclasses import dataclass
 from typing import Final, Protocol, Self
 
 ADMINISTRATOR: Final = 1 << 3
-"""Discord's `ADMINISTRATOR` permission bit. The only one Timothy's authorization
-reads today (ADR 0001), though the whole bitfield is carried."""
+"""Discord's `ADMINISTRATOR` permission bit. The only permission Timothy's authorization
+reads (ADR 0001), though the whole bitfield is carried. Authority over pools is a role
+rather than a permission, and is read from :attr:`Member.role_ids` (ADR 0012)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +27,15 @@ class Member:
     guild_id: int
     user_id: int
     display_name: str
+    role_ids: frozenset[int] = frozenset()
+    """Every role the member holds here, by ID.
+
+    Raw, unlike :class:`GuildPermissions` beside it, because the question asked of it is
+    "do they hold *this* role" (ADR 0012) rather than "what may they do", and Discord has
+    nothing to resolve for that. The `@everyone` role is Discord's own bookkeeping and is
+    not included: it would make every member of the guild hold a configured role whose ID
+    happened to be the guild's.
+    """
 
 
 @dataclass(frozen=True, slots=True)

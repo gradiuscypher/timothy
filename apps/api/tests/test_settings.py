@@ -120,6 +120,19 @@ def test_no_owner_is_the_default() -> None:
     assert Settings().owner_ids == frozenset()
 
 
+def test_no_pool_manager_role_is_the_default() -> None:
+    """Pool management is closed until a role is named, and never falls back to the
+    management guild's administrators (ADR 0012). Deploying this the first time means
+    creating the role and assigning it, which is the intended shape: an explicit grant
+    rather than a permission somebody already had."""
+    assert Settings().pool_manager_role_ids == frozenset()
+
+
+def test_pool_manager_roles_are_a_comma_separated_set() -> None:
+    """More than one role can own pools, without merging them in Discord."""
+    assert Settings(pool_manager_role_ids="1, 2").pool_manager_role_ids == frozenset({1, 2})
+
+
 def test_an_unreadable_owner_id_is_dropped_rather_than_fatal() -> None:
     """This setting only ever narrows, so a typo produces a smaller set of owners and
     never a larger one. Failing closed on the bad entry beats refusing to start."""

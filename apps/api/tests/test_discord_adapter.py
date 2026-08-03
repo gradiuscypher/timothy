@@ -167,11 +167,18 @@ class StubClient:
         return self.channel
 
 
-def member(permissions: int = 0) -> object:
+def member(permissions: int = 0, *, role_ids: tuple[int, ...] = ()) -> object:
+    """A discord.py member, shaped as much as the adapter reads.
+
+    `roles` always leads with `@everyone`, whose ID is the guild's — that is Discord's
+    own arrangement, and the reason the adapter drops it.
+    """
+    roles = [SimpleNamespace(id=GUILD), *(SimpleNamespace(id=role) for role in role_ids)]
     return SimpleNamespace(
         id=USER,
         display_name="someone",
         guild_permissions=SimpleNamespace(value=permissions),
+        roles=roles,
     )
 
 
@@ -241,6 +248,19 @@ async def test_a_present_member_comes_back() -> None:
 
     assert found is not None
     assert found.display_name == "someone"
+
+
+@pytest.mark.anyio
+async def test_a_members_roles_come_back_without_everyone() -> None:
+    """`@everyone` has the guild's own ID, so carrying it would make a
+    `POOL_MANAGER_ROLE_IDS` that named the management guild admit the whole guild."""
+    role = 900_000_000_000_000_001
+    client = StubClient(StubGuild(member=member(role_ids=(role,))))
+
+    found = await adapter(client).fetch_member(guild_id=GUILD, user_id=USER)
+
+    assert found is not None
+    assert found.role_ids == frozenset({role})
 
 
 @pytest.mark.anyio

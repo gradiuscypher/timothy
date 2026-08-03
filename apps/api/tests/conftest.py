@@ -34,8 +34,20 @@ MANAGEMENT_GUILD = 100_000_000_000_000_001
 GUILD = 100_000_000_000_000_002
 OTHER_GUILD = 100_000_000_000_000_003
 
-POOL_ADMIN = 200_000_000_000_000_001
-"""Administrator in the management guild: owns pools and listings."""
+POOL_MANAGER_ROLE = 500_000_000_000_000_001
+"""The role in the management guild that owns pools and listings (ADR 0012)."""
+
+POOL_MANAGER = 200_000_000_000_000_001
+"""Holds `POOL_MANAGER_ROLE`, and deliberately holds nothing else: not an administrator
+in the management guild, not an administrator anywhere. The role is the whole of their
+authority, so a test that passes for them passes because of the role."""
+
+MANAGEMENT_ADMIN = 200_000_000_000_000_006
+"""Administrator in the management guild, without the pool manager role.
+
+The counterpart to POOL_MANAGER, and the reason the pair exists: administering the guild
+where pools live grants nothing over the pools themselves (ADR 0012). Before that ADR
+this user and POOL_MANAGER were the same person."""
 
 GUILD_ADMIN = 200_000_000_000_000_002
 """Administrator in GUILD, and an ordinary member of the management guild."""
@@ -57,7 +69,7 @@ CHANNEL = 400_000_000_000_000_001
 
 
 def headers(
-    actor: int | str | None = POOL_ADMIN, *, token: str | None = TOKEN
+    actor: int | str | None = POOL_MANAGER, *, token: str | None = TOKEN
 ) -> dict[str, str]:
     """Credentials for one call: the service token, and who it is on behalf of."""
     sent = {}
@@ -94,8 +106,9 @@ def discord() -> FakeDiscord:
     fake.add_guild(OTHER_GUILD)
     fake.add_channel(CHANNEL, GUILD)
 
+    fake.add_member(MANAGEMENT_GUILD, POOL_MANAGER, role_ids=frozenset({POOL_MANAGER_ROLE}))
     fake.add_member(
-        MANAGEMENT_GUILD, POOL_ADMIN, permissions=GuildPermissions.administrator_only()
+        MANAGEMENT_GUILD, MANAGEMENT_ADMIN, permissions=GuildPermissions.administrator_only()
     )
     fake.add_member(MANAGEMENT_GUILD, GUILD_ADMIN)
     fake.add_member(GUILD, GUILD_ADMIN, permissions=GuildPermissions.administrator_only())
@@ -128,6 +141,7 @@ def settings(tmp_path: Path, settings_overrides: dict[str, Any]) -> Settings:
         "database_url": f"sqlite+aiosqlite:///{tmp_path / 'timothy.db'}",
         "internal_token": TOKEN,
         "management_guild_id": MANAGEMENT_GUILD,
+        "pool_manager_role_ids": frozenset({POOL_MANAGER_ROLE}),
         "owner_ids": frozenset({OWNER}),
         "auto_subscribe_pool": "global",
         "workers_enabled": False,
@@ -442,7 +456,7 @@ def pool(registered: TestClient) -> TestClient:
     response = registered.post(
         "/pools",
         json={"name": "spam", "description": "spammers"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
     assert response.status_code == 201
     return registered

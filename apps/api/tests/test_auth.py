@@ -26,7 +26,7 @@ from .conftest import (
     MEMBER,
     OUTSIDER,
     OWNER,
-    POOL_ADMIN,
+    POOL_MANAGER,
     FakeOAuth,
     headers,
     sign_in,
@@ -130,6 +130,70 @@ def test_a_refused_exchange_lands_on_a_page_that_can_say_so(
     assert sessions.COOKIE_NAME not in client.cookies
 
 
+# -- who may sign in at all (ADR 0013) -------------------------------------------------
+
+
+def test_a_login_from_outside_the_management_guild_is_refused(
+    client: TestClient, oauth: FakeOAuth
+) -> None:
+    """The door. Discord confirmed who this is and Timothy still writes no session: the
+    web UI is for the people in the server Timothy is run from."""
+    client.get("/auth/login", follow_redirects=False)
+    state = client.cookies[sessions.STATE_COOKIE_NAME]
+    oauth.register("code", user_id=OUTSIDER, guild_ids=(GUILD,))
+
+    response = client.get(f"/auth/callback?code=code&state={state}", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/?login=denied"
+    assert sessions.COOKIE_NAME not in client.cookies
+
+
+def test_a_refused_login_writes_no_session_row(
+    client: TestClient, oauth: FakeOAuth, settings: Settings
+) -> None:
+    """Not just no cookie — no row either. A session the browser never received is still
+    a session, and pruning it is somebody else's problem later."""
+    client.get("/auth/login", follow_redirects=False)
+    state = client.cookies[sessions.STATE_COOKIE_NAME]
+    oauth.register("code", user_id=OUTSIDER, guild_ids=(GUILD,))
+
+    client.get(f"/auth/callback?code=code&state={state}", follow_redirects=False)
+
+    engine = create_engine(sync_url(settings.database_url))
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(text("SELECT COUNT(*) FROM sessions")).scalar()
+    finally:
+        engine.dispose()
+
+    assert rows == 0
+
+
+def test_an_ordinary_member_of_the_management_guild_may_sign_in(
+    client: TestClient, oauth: FakeOAuth
+) -> None:
+    """Membership and nothing else. GUILD_ADMIN holds no role and no permission in the
+    management guild — being there is the whole of what this gate asks for."""
+    sign_in(client, oauth, user_id=GUILD_ADMIN, guild_ids=(MANAGEMENT_GUILD, GUILD))
+
+    assert client.get("/auth/me").json()["user_id"] == str(GUILD_ADMIN)
+
+
+def test_login_is_closed_when_the_management_guild_is_unconfigured(
+    settings: Settings, discord: FakeDiscord, oauth: FakeOAuth
+) -> None:
+    """Nobody is in guild zero, so an unset management guild refuses every login. Saying
+    so at /login is the difference between a missing setting and a wrong password."""
+    unset = settings.model_copy(update={"management_guild_id": 0})
+
+    with TestClient(create_app(unset, discord_port=discord, oauth_port=oauth)) as client:
+        response = client.get("/auth/login", follow_redirects=False)
+
+    assert response.status_code == 503
+    assert "TIMOTHY_MANAGEMENT_GUILD_ID" in response.json()["detail"]
+
+
 def test_logging_out_ends_the_session(client: TestClient, oauth: FakeOAuth) -> None:
     sign_in(client, oauth)
 
@@ -204,7 +268,7 @@ def test_a_session_may_not_also_name_an_actor(client: TestClient, oauth: FakeOAu
     one of the two quietly win."""
     sign_in(client, oauth, user_id=MEMBER)
 
-    response = client.get("/auth/me", headers={"X-Timothy-Actor": f"user:{POOL_ADMIN}"})
+    response = client.get("/auth/me", headers={"X-Timothy-Actor": f"user:{POOL_MANAGER}"})
 
     assert response.status_code == 400
     assert "X-Timothy-Actor" in response.json()["detail"]
@@ -227,7 +291,7 @@ def test_a_browser_cannot_be_talked_into_a_state_change_from_another_site(
 ) -> None:
     """`SameSite=Lax` is the first lock and this is the second. The first is a browser
     default that an embedding or a stray `SameSite=None` could turn off silently."""
-    sign_in(registered, oauth, user_id=POOL_ADMIN, guild_ids=(MANAGEMENT_GUILD,))
+    sign_in(registered, oauth, user_id=POOL_MANAGER, guild_ids=(MANAGEMENT_GUILD,))
 
     response = registered.post(
         "/pools", json={"name": "spam"}, headers={"Origin": "https://evil.example"}
@@ -242,7 +306,7 @@ def test_a_browser_state_change_with_no_origin_at_all_is_refused(
 ) -> None:
     """Every browser sends `Origin` on a request that is not a GET, so a missing one is
     not a browser making an ordinary request."""
-    sign_in(registered, oauth, user_id=POOL_ADMIN, guild_ids=(MANAGEMENT_GUILD,))
+    sign_in(registered, oauth, user_id=POOL_MANAGER, guild_ids=(MANAGEMENT_GUILD,))
 
     assert registered.post("/pools", json={"name": "spam"}).status_code == 403
 
@@ -250,7 +314,7 @@ def test_a_browser_state_change_with_no_origin_at_all_is_refused(
 def test_a_same_origin_state_change_goes_through(
     registered: TestClient, oauth: FakeOAuth
 ) -> None:
-    sign_in(registered, oauth, user_id=POOL_ADMIN, guild_ids=(MANAGEMENT_GUILD,))
+    sign_in(registered, oauth, user_id=POOL_MANAGER, guild_ids=(MANAGEMENT_GUILD,))
 
     response = registered.post("/pools", json={"name": "spam"}, headers=ORIGIN)
 
@@ -259,7 +323,7 @@ def test_a_same_origin_state_change_goes_through(
 
 def test_a_service_caller_is_not_asked_about_origins(registered: TestClient) -> None:
     """The check is for cookies. The bot holds a token, which no third-party page has."""
-    response = registered.post("/pools", json={"name": "spam"}, headers=headers(POOL_ADMIN))
+    response = registered.post("/pools", json={"name": "spam"}, headers=headers(POOL_MANAGER))
 
     assert response.status_code == 201
 
@@ -276,39 +340,40 @@ def test_a_call_with_neither_credential_is_refused(client: TestClient) -> None:
 
 def test_a_session_grants_nothing_by_itself(registered: TestClient, oauth: FakeOAuth) -> None:
     """Logging in says who you are. What you may do is still resolved against Discord —
-    this user is in the management guild and holds nothing there."""
-    sign_in(registered, oauth, user_id=MEMBER, guild_ids=(GUILD,))
+    this user got through the door on membership of the management guild and holds
+    nothing there."""
+    sign_in(registered, oauth, user_id=MEMBER, guild_ids=(MANAGEMENT_GUILD, GUILD))
 
     response = registered.post("/pools", json={"name": "spam"}, headers=ORIGIN)
 
     assert response.status_code == 403
 
 
-def test_a_signed_in_pool_admin_is_told_they_manage_pools(
+def test_a_signed_in_pool_manager_is_told_they_manage_pools(
     registered: TestClient, oauth: FakeOAuth
 ) -> None:
-    sign_in(registered, oauth, user_id=POOL_ADMIN, guild_ids=(MANAGEMENT_GUILD,))
+    sign_in(registered, oauth, user_id=POOL_MANAGER, guild_ids=(MANAGEMENT_GUILD,))
 
     assert registered.get("/auth/me").json()["manages_pools"] is True
 
 
 def test_a_signed_in_member_is_not(registered: TestClient, oauth: FakeOAuth) -> None:
-    sign_in(registered, oauth, user_id=MEMBER, guild_ids=(GUILD,))
+    sign_in(registered, oauth, user_id=MEMBER, guild_ids=(MANAGEMENT_GUILD, GUILD))
 
     assert registered.get("/auth/me").json()["manages_pools"] is False
 
 
 def test_a_service_caller_has_an_identity_but_no_session(registered: TestClient) -> None:
-    me = registered.get("/auth/me", headers=headers(POOL_ADMIN)).json()
+    me = registered.get("/auth/me", headers=headers(POOL_MANAGER)).json()
 
-    assert me["user_id"] == str(POOL_ADMIN)
+    assert me["user_id"] == str(POOL_MANAGER)
     assert me["username"] is None
     assert me["expires_at"] is None
     assert me["manages_pools"] is True
 
 
 def test_logging_out_without_a_session_is_not_an_error(registered: TestClient) -> None:
-    response = registered.post("/auth/logout", headers=headers(POOL_ADMIN))
+    response = registered.post("/auth/logout", headers=headers(POOL_MANAGER))
 
     assert response.status_code == 204
 
@@ -321,21 +386,33 @@ def test_a_browser_is_scanned_only_against_the_guilds_discord_named(
 ) -> None:
     """Reading pools needs membership of some guild Timothy is in. For a browser that is
     answered from the intersection of two lists Discord provided, and confirmed against
-    Discord for the guilds in it — never by scanning the rest."""
-    sign_in(registered, oauth, user_id=MEMBER, guild_ids=(GUILD,))
+    Discord for the guilds in it — never by scanning the rest.
+
+    Every browser's snapshot now names the management guild, because otherwise there is
+    no session (ADR 0013). What it still decides is all the rest: this person really is
+    in GUILD, their snapshot does not say so, and GUILD is never asked about.
+    """
+    sign_in(registered, oauth, user_id=MEMBER, guild_ids=(MANAGEMENT_GUILD,))
     discord.calls.clear()
 
-    assert registered.get("/pools").status_code == 200
+    assert registered.get("/pools").status_code == 403
     looked_up = discord.calls_of("fetch_member")
-    assert [(call.guild_id, call.user_id) for call in looked_up] == [(GUILD, MEMBER)]
+    assert [(call.guild_id, call.user_id) for call in looked_up] == [(MANAGEMENT_GUILD, MEMBER)]
 
 
 def test_a_browser_in_none_of_timothys_guilds_is_refused_without_asking_discord(
     registered: TestClient, oauth: FakeOAuth, discord: FakeDiscord
 ) -> None:
     """The carried-forward cost from phase 5: a genuine non-member used to pay a Discord
-    call per guild — 52 seconds across the real deployment — before being told no."""
-    sign_in(registered, oauth, user_id=OUTSIDER, guild_ids=(999_000_000_000_000_001,))
+    call per guild — 52 seconds across the real deployment — before being told no.
+
+    Reaching it takes more arranging than it did, because a session cannot be issued to
+    somebody outside the management guild any more. What is left is Timothy being removed
+    from that guild while somebody's session is still live.
+    """
+    sign_in(registered, oauth, user_id=MEMBER, guild_ids=(MANAGEMENT_GUILD,))
+    left = registered.delete(f"/guilds/{MANAGEMENT_GUILD}", headers=headers("system"))
+    assert left.status_code == 204
     discord.calls.clear()
 
     assert registered.get("/pools").status_code == 403
@@ -348,7 +425,7 @@ def test_the_snapshot_narrows_the_question_and_never_answers_it(
     """Somebody who has left since logging in is refused, even though their snapshot
     still names the guild. The snapshot decides who to ask about, not what the answer
     is."""
-    sign_in(registered, oauth, user_id=OUTSIDER, guild_ids=(GUILD,))
+    sign_in(registered, oauth, user_id=OUTSIDER, guild_ids=(MANAGEMENT_GUILD, GUILD))
 
     assert registered.get("/pools").status_code == 403
 
@@ -401,8 +478,13 @@ def test_the_redirect_uri_is_built_from_configuration(
 
 def test_a_signed_in_owner_is_told_so(registered: TestClient, oauth: FakeOAuth) -> None:
     """The SPA draws the Operations link from this. A hint, like `manages_pools` — the
-    `/ops` routes check it again for themselves."""
-    sign_in(registered, oauth, user_id=OWNER, guild_ids=(GUILD,))
+    `/ops` routes check it again for themselves.
+
+    Being in the management guild is how the owner reaches the web UI at all now
+    (ADR 0013). It is still not where the ownership comes from: they hold nothing there,
+    and `is_owner` is answered from configuration without asking Discord anything.
+    """
+    sign_in(registered, oauth, user_id=OWNER, guild_ids=(MANAGEMENT_GUILD,))
 
     me = registered.get("/auth/me").json()
 
@@ -414,7 +496,7 @@ def test_the_management_guilds_administrator_is_not_the_owner(
     registered: TestClient, oauth: FakeOAuth
 ) -> None:
     """Two different jobs, and this is where the UI learns they are different."""
-    sign_in(registered, oauth, user_id=POOL_ADMIN, guild_ids=(MANAGEMENT_GUILD,))
+    sign_in(registered, oauth, user_id=POOL_MANAGER, guild_ids=(MANAGEMENT_GUILD,))
 
     me = registered.get("/auth/me").json()
 

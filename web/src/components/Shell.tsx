@@ -1,4 +1,5 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
 
 import { LOGIN_URL, type SignedIn } from "@/api/client";
 import { useLogout, useSignedIn } from "@/api/hooks";
@@ -12,7 +13,7 @@ import {
   type Family,
   type Mode,
 } from "@/components/theme";
-import { Button, ErrorNote, Loading, Select } from "@/components/ui";
+import { Button, ChoiceList, ErrorNote, Loading } from "@/components/ui";
 
 /**
  * The frame every screen is drawn in, and the gate in front of it.
@@ -49,10 +50,25 @@ export function Shell() {
   );
 }
 
+/**
+ * Two ways a login ends up back here, and they are not the same problem:
+ *
+ * - `failed` — Discord refused the exchange. Trying again is the right advice.
+ * - `denied` — the login worked and the person is not in the management server. Trying
+ *   again does exactly the same thing, so the message has to say what would change it.
+ */
+const LOGIN_ERRORS: Record<string, string> = {
+  failed: "Discord refused that login. Please try again.",
+  denied:
+    "Signing in is limited to members of the Timothy management server. " +
+    "Ask whoever runs it for an invite, then try again.",
+};
+
 function SignIn() {
-  // `/auth/callback` sends a failed login here rather than showing JSON in the address
+  // `/auth/callback` sends a refused login here rather than showing JSON in the address
   // bar, and this is the half that reads it.
-  const failed = new URLSearchParams(window.location.search).get("login") === "failed";
+  const reason = new URLSearchParams(window.location.search).get("login");
+  const message = reason ? LOGIN_ERRORS[reason] : undefined;
 
   return (
     <main className="mx-auto grid min-h-full max-w-md place-items-center p-8">
@@ -62,9 +78,7 @@ function SignIn() {
           Shared moderation for Discord. Sign in to manage the pools you own and the
           servers you administer.
         </p>
-        {failed ? (
-          <ErrorNote error={new Error("Discord refused that login. Please try again.")} />
-        ) : null}
+        {message ? <ErrorNote error={new Error(message)} /> : null}
         <a
           href={LOGIN_URL}
           className="inline-flex h-10 items-center justify-center rounded-md bg-accent px-5 text-sm font-medium text-accent-ink hover:opacity-90"
@@ -72,8 +86,9 @@ function SignIn() {
           Sign in with Discord
         </a>
         <p className="text-xs text-surface-muted">
-          Timothy asks for your identity and the list of servers you are in. What you may
-          do is decided by the permissions you already hold in them.
+          Timothy asks for your identity and the list of servers you are in. Signing in
+          needs membership of the management server; what you may do afterwards is decided
+          by the permissions you already hold.
         </p>
       </div>
     </main>
@@ -81,47 +96,131 @@ function SignIn() {
 }
 
 /**
- * Two selects rather than one list of every combination, because the two choices are
- * independent — see `theme.ts`. Native `<select>` for the same reason the rest of this
- * file uses native elements: it is labelled, keyboard-operable and screen-reader correct
- * without a line of code, and the alternative is writing a popover.
+ * Both theme choices, laid out rather than folded into dropdowns.
+ *
+ * Still two groups and not one list of every combination, because the two choices are
+ * independent — see `theme.ts`. What changed is the control: five options between them is
+ * short enough to show whole, and a list you read once beats two dropdowns you open,
+ * scan and close. They are radios, so the semantics a `<select>` gave for free are still
+ * there; `ChoiceList` says how.
+ *
+ * The theme itself is not read here. `useTheme` is what applies the stored choice to the
+ * document, so it has to run whether or not this panel is on screen — it lives in
+ * `SettingsMenu`, which the top bar always renders, and hands the answer down.
+ */
+function ThemeChoices({
+  family,
+  mode,
+  setFamily,
+  setMode,
+}: ReturnType<typeof useTheme>) {
+  return (
+    <div className="space-y-3">
+      <ChoiceList
+        label="Theme"
+        name="theme-family"
+        value={family}
+        onChange={(next: Family) => setFamily(next)}
+        options={FAMILIES.map((option) => ({ value: option, label: FAMILY_LABELS[option] }))}
+      />
+      <ChoiceList
+        label="Light or dark"
+        name="theme-mode"
+        value={mode}
+        onChange={(next: Mode) => setMode(next)}
+        options={MODES.map((option) => ({ value: option, label: MODE_LABELS[option] }))}
+      />
+    </div>
+  );
+}
+
+/**
+ * The settings menu, and the three ways out of it.
+ *
+ * A popover has to be dismissible by something other than the button that opened it, or
+ * it is a trap for anybody who opened it by accident: Escape, a click anywhere else, and
+ * focus leaving the panel all close it. `pointerdown` rather than `click` so a press that
+ * starts outside closes immediately instead of waiting to see where it ends.
+ *
+ * Nothing here is destructive and nothing is asynchronous, so the panel stays a plain
+ * region rather than a modal — the page behind it is still readable, and the theme
+ * changing underneath the open menu is the point.
  *
  * This lives in the top bar, which the shell only renders behind a session. Somebody
  * signed out sees the login screen in whatever theme they last chose but cannot change it
  * there — a control on a page you visit once, to change something you cannot yet see the
  * effect of, is not worth the second copy.
  */
-function ThemePicker() {
-  const { family, mode, setFamily, setMode } = useTheme();
-  const compact = "h-8 w-auto py-0 pr-7 pl-2 text-xs";
+function SettingsMenu() {
+  const theme = useTheme();
+  const [open, setOpen] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!container.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
 
   return (
-    <div className="flex items-center gap-1">
-      <Select
-        aria-label="Theme"
-        className={compact}
-        value={family}
-        onChange={(event) => setFamily(event.target.value as Family)}
+    <div
+      ref={container}
+      className="relative"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-label="Settings"
+        aria-expanded={open}
+        aria-haspopup="true"
+        onClick={() => setOpen((was) => !was)}
       >
-        {FAMILIES.map((option) => (
-          <option key={option} value={option}>
-            {FAMILY_LABELS[option]}
-          </option>
-        ))}
-      </Select>
-      <Select
-        aria-label="Light or dark"
-        className={compact}
-        value={mode}
-        onChange={(event) => setMode(event.target.value as Mode)}
-      >
-        {MODES.map((option) => (
-          <option key={option} value={option}>
-            {MODE_LABELS[option]}
-          </option>
-        ))}
-      </Select>
+        <GearIcon />
+      </Button>
+      {open ? (
+        <div
+          role="group"
+          aria-label="Settings"
+          className={cn(
+            "absolute right-0 z-40 mt-1 w-52 rounded-lg border border-surface-border",
+            "bg-surface-1 p-3 shadow-lg",
+          )}
+        >
+          <ThemeChoices {...theme} />
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
   );
 }
 
@@ -164,7 +263,6 @@ function TopBar({ me }: { me: SignedIn }) {
           })}
         </nav>
         <div className="ml-auto flex items-center gap-2 text-sm">
-          <ThemePicker />
           <span className="text-surface-muted">{me.username ?? me.actor}</span>
           <Button
             size="sm"
@@ -179,6 +277,7 @@ function TopBar({ me }: { me: SignedIn }) {
           >
             Sign out
           </Button>
+          <SettingsMenu />
         </div>
       </div>
     </header>

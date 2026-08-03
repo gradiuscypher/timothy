@@ -15,7 +15,7 @@ from .conftest import (
     GUILD_ADMIN,
     LISTED_USER,
     MEMBER,
-    POOL_ADMIN,
+    POOL_MANAGER,
     headers,
 )
 
@@ -27,30 +27,30 @@ CRUD surface — enforcement is queued, and the tests that drive it live elsewhe
 
 
 def actions(client: TestClient) -> list[str]:
-    entries = client.get("/audit-log", headers=headers(POOL_ADMIN)).json()
+    entries = client.get("/audit-log", headers=headers(POOL_MANAGER)).json()
     return [entry["action"] for entry in entries]
 
 
 def test_only_the_management_guild_reads_the_log(registered: TestClient) -> None:
     assert registered.get("/audit-log", headers=headers(GUILD_ADMIN)).status_code == 403
     assert registered.get("/audit-log", headers=headers(MEMBER)).status_code == 403
-    assert registered.get("/audit-log", headers=headers(POOL_ADMIN)).status_code == 200
+    assert registered.get("/audit-log", headers=headers(POOL_MANAGER)).status_code == 200
 
 
 def test_creating_a_pool_is_recorded(pool: TestClient) -> None:
-    entries = pool.get("/audit-log", headers=headers(POOL_ADMIN)).json()
+    entries = pool.get("/audit-log", headers=headers(POOL_MANAGER)).json()
 
     assert entries[0]["action"] == AuditAction.POOL_CREATE.value
     assert entries[0]["target"] == "pool:spam"
-    assert entries[0]["actor"] == f"user:{POOL_ADMIN}"
+    assert entries[0]["actor"] == f"user:{POOL_MANAGER}"
 
 
 def test_timothys_own_work_is_attributed_to_timothy(client: TestClient) -> None:
     """Not to a magic user ID indistinguishable from a real person (ADR 0006)."""
-    client.post("/pools", json={"name": "global"}, headers=headers(POOL_ADMIN))
+    client.post("/pools", json={"name": "global"}, headers=headers(POOL_MANAGER))
     client.put(f"/guilds/{GUILD}", headers=headers("system"))
 
-    entries = client.get("/audit-log", headers=headers(POOL_ADMIN)).json()
+    entries = client.get("/audit-log", headers=headers(POOL_MANAGER)).json()
     subscription = next(
         entry for entry in entries if entry["action"] == AuditAction.SUBSCRIPTION_SET.value
     )
@@ -63,7 +63,7 @@ def test_every_mutation_leaves_a_line(pool: TestClient) -> None:
     pool.post(
         "/pools/spam/listings",
         json={"user_id": str(LISTED_USER), "reason": "spam"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
     pool.put(
         f"/guilds/{GUILD}/subscriptions/spam",
@@ -79,12 +79,12 @@ def test_every_mutation_leaves_a_line(pool: TestClient) -> None:
     pool.patch(
         f"/guilds/{GUILD}", json={"enforcement_paused": True}, headers=headers(GUILD_ADMIN)
     )
-    pool.patch("/pools/spam", json={"description": "x"}, headers=headers(POOL_ADMIN))
+    pool.patch("/pools/spam", json={"description": "x"}, headers=headers(POOL_MANAGER))
     pool.delete(f"/guilds/{GUILD}/exceptions/{LISTED_USER}", headers=headers(GUILD_ADMIN))
-    pool.delete(f"/pools/spam/listings/{LISTED_USER}", headers=headers(POOL_ADMIN))
+    pool.delete(f"/pools/spam/listings/{LISTED_USER}", headers=headers(POOL_MANAGER))
     pool.delete(f"/guilds/{GUILD}/notification-channel", headers=headers(GUILD_ADMIN))
     pool.delete(f"/guilds/{GUILD}/subscriptions/spam", headers=headers(GUILD_ADMIN))
-    pool.delete("/pools/spam", headers=headers(POOL_ADMIN))
+    pool.delete("/pools/spam", headers=headers(POOL_MANAGER))
     pool.delete(f"/guilds/{GUILD}", headers=headers("system"))
 
     assert set(actions(pool)) == {action.value for action in AuditAction} - ENFORCEMENT_ACTIONS
@@ -105,7 +105,7 @@ def test_a_failed_mutation_records_nothing(pool: TestClient) -> None:
     before = len(actions(pool))
 
     assert (
-        pool.post("/pools", json={"name": "spam"}, headers=headers(POOL_ADMIN)).status_code
+        pool.post("/pools", json={"name": "spam"}, headers=headers(POOL_MANAGER)).status_code
         == 409
     )
 
@@ -113,17 +113,17 @@ def test_a_failed_mutation_records_nothing(pool: TestClient) -> None:
 
 
 def test_a_rename_records_what_it_changed(pool: TestClient) -> None:
-    pool.patch("/pools/spam", json={"name": "junk"}, headers=headers(POOL_ADMIN))
+    pool.patch("/pools/spam", json={"name": "junk"}, headers=headers(POOL_MANAGER))
 
-    entries = pool.get("/audit-log", headers=headers(POOL_ADMIN)).json()
+    entries = pool.get("/audit-log", headers=headers(POOL_MANAGER)).json()
 
     assert entries[0]["detail"]["changed"]["name"] == {"from": "spam", "to": "junk"}
 
 
 def test_the_newest_entry_comes_first(pool: TestClient) -> None:
-    pool.post("/pools", json={"name": "raiders"}, headers=headers(POOL_ADMIN))
+    pool.post("/pools", json={"name": "raiders"}, headers=headers(POOL_MANAGER))
 
-    entries = pool.get("/audit-log", headers=headers(POOL_ADMIN)).json()
+    entries = pool.get("/audit-log", headers=headers(POOL_MANAGER)).json()
 
     assert entries[0]["target"] == "pool:raiders"
     assert entries[1]["target"] == "pool:spam"
@@ -133,11 +133,11 @@ def test_the_log_pages_by_cursor(pool: TestClient) -> None:
     """By id rather than offset: the table only grows at one end, so an offset would
     shift under a reader as new rows arrive."""
     for name in ("a", "b", "c"):
-        pool.post("/pools", json={"name": name}, headers=headers(POOL_ADMIN))
+        pool.post("/pools", json={"name": name}, headers=headers(POOL_MANAGER))
 
-    first = pool.get("/audit-log?limit=2", headers=headers(POOL_ADMIN)).json()
+    first = pool.get("/audit-log?limit=2", headers=headers(POOL_MANAGER)).json()
     second = pool.get(
-        f"/audit-log?limit=2&before_id={first[-1]['id']}", headers=headers(POOL_ADMIN)
+        f"/audit-log?limit=2&before_id={first[-1]['id']}", headers=headers(POOL_MANAGER)
     ).json()
 
     assert len(first) == 2
@@ -148,15 +148,15 @@ def test_the_log_filters_by_action(pool: TestClient) -> None:
     pool.post(
         "/pools/spam/listings",
         json={"user_id": str(LISTED_USER), "reason": "spam"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
 
     entries = pool.get(
-        f"/audit-log?action={AuditAction.LISTING_CREATE.value}", headers=headers(POOL_ADMIN)
+        f"/audit-log?action={AuditAction.LISTING_CREATE.value}", headers=headers(POOL_MANAGER)
     ).json()
 
     assert [entry["action"] for entry in entries] == [AuditAction.LISTING_CREATE.value]
 
 
 def test_an_absurd_page_size_is_refused(pool: TestClient) -> None:
-    assert pool.get("/audit-log?limit=5000", headers=headers(POOL_ADMIN)).status_code == 422
+    assert pool.get("/audit-log?limit=5000", headers=headers(POOL_MANAGER)).status_code == 422

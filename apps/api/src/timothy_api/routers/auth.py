@@ -11,6 +11,11 @@ Authority is not granted here. A session says *who* someone is; what they may do
 resolved against Discord on every request (ADR 0001), which is why logging in tells you
 so little — the only permission it reports is whether the person owns pools, and that is
 one cached Discord call made for the UI's benefit, not a grant.
+
+The one thing logging in *does* decide is who gets a session at all: membership of the
+management guild, checked in `/callback` against the guild list Discord returns with the
+identity (ADR 0013). It is a door, not a grant — everyone it admits still has to resolve
+every permission against Discord afterwards.
 """
 
 import logging
@@ -20,11 +25,12 @@ from typing import Annotated
 from fastapi import APIRouter, Cookie, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 
-from timothy_api import sessions
+from timothy_api import deps, sessions
 from timothy_api.deps import ResolverDep, SessionDep, SettingsDep
 from timothy_api.identity import CallerDep
 from timothy_api.oauth import OAuthError, OAuthPort
 from timothy_api.schemas import SignedInRead
+from timothy_api.settings import Settings
 
 log = logging.getLogger(__name__)
 
@@ -41,12 +47,17 @@ def _oauth(request: Request) -> OAuthPort:
     return port
 
 
-def _require_configured(request: Request) -> OAuthPort:
+def _require_configured(request: Request, settings: Settings) -> OAuthPort:
     """The OAuth flow, or a 503 naming what is missing.
 
     Fails closed and loudly. A half-configured login that redirects to Discord with an
     empty client ID gets an error page from Discord, which is somebody else's error
     message about somebody else's problem.
+
+    The management guild is part of that configuration now that login requires membership
+    of it (ADR 0013). Unset, nobody is in guild zero and every login would be refused
+    after the round trip to Discord — a wrong password's symptom for a missing setting.
+    Saying so before the browser leaves is the same trade as the clause above.
 
     Raises:
         HTTPException: 503 if the application is not configured for login.
@@ -60,7 +71,27 @@ def _require_configured(request: Request) -> OAuthPort:
                 "TIMOTHY_DISCORD_CLIENT_SECRET and TIMOTHY_PUBLIC_BASE_URL"
             ),
         )
+    if not settings.management_guild_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "login is not configured: set TIMOTHY_MANAGEMENT_GUILD_ID, whose members "
+                "are the people allowed to sign in"
+            ),
+        )
     return port
+
+
+def _back_to_the_login_page(reason: str) -> RedirectResponse:
+    """Put the browser back on the SPA's login screen, with the reason in the query.
+
+    `/callback` is somewhere a browser *lands*, so a refusal has to end up on a page that
+    can explain itself rather than as JSON in the address bar. The pending login's state
+    cookie goes with it: whatever happens next starts from `/login` again.
+    """
+    response = RedirectResponse(f"/?login={reason}", status_code=status.HTTP_303_SEE_OTHER)
+    response.delete_cookie(sessions.STATE_COOKIE_NAME, path="/")
+    return response
 
 
 def _set_cookie(
@@ -97,7 +128,7 @@ async def login(request: Request, settings: SettingsDep) -> RedirectResponse:
     Not in the schema: it is a place to navigate to, not a call the generated client
     should ever make. The UI links to it.
     """
-    port = _require_configured(request)
+    port = _require_configured(request, settings)
     state = secrets.token_urlsafe(sessions.TOKEN_BYTES)
 
     response = RedirectResponse(
@@ -126,12 +157,17 @@ async def callback(
 
     Redirects rather than returning JSON, in both directions: this URL is somewhere a
     browser lands, not somewhere it fetches, so a failure has to end up on a page that
-    can say so. `/?login=failed` is what the SPA reads.
+    can say so. `/?login=failed` and `/?login=denied` are what the SPA reads.
+
+    The membership check is the one thing this route decides. Discord returns the guild
+    list with the identity — the `guilds` scope ADR 0010 already asks for, so it costs no
+    extra call — and a login from somebody who is not in the management guild ends here,
+    with no session row written (ADR 0013).
 
     Raises:
         HTTPException: 400 if the state does not match the one that was issued.
     """
-    port = _require_configured(request)
+    port = _require_configured(request, settings)
     if not state_cookie or not secrets.compare_digest(state, state_cookie):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -142,9 +178,14 @@ async def callback(
         identity = await port.identify(code=code)
     except OAuthError:
         log.exception("discord refused the login exchange")
-        response = RedirectResponse("/?login=failed", status_code=status.HTTP_303_SEE_OTHER)
-        response.delete_cookie(sessions.STATE_COOKIE_NAME, path="/")
-        return response
+        return _back_to_the_login_page("failed")
+
+    if settings.management_guild_id not in identity.guild_ids:
+        log.info(
+            "refused a login for user %s: not a member of the management guild",
+            identity.user_id,
+        )
+        return _back_to_the_login_page("denied")
 
     token = await sessions.issue(session, identity, lifetime=settings.session_lifetime)
     log.info("signed in user %s", identity.user_id)
@@ -170,7 +211,9 @@ async def me(
 ) -> SignedInRead:
     """Who the caller is, and the one thing the UI needs to know they can do.
 
-    `manages_pools` is a cached Discord lookup and `is_owner` is a set membership; both
+    `manages_pools` is a cached Discord lookup — the same one the pool routes gate on,
+    through the same function, so the nav and the gate cannot disagree about who manages
+    pools. `is_owner` is a set membership. Both
     decide which navigation the SPA draws. They are conveniences, not gates: every route
     behind them resolves the same thing again for itself, so a stale `false` hides a link
     and a stale `true` produces a 403 rather than an escalation.
@@ -180,9 +223,7 @@ async def me(
     call rather than a guess.
     """
     user_id = caller.actor.user_id
-    manages_pools = user_id is not None and await resolver.is_administrator(
-        guild_id=settings.management_guild_id, user_id=user_id
-    )
+    pool_manager = await deps.manages_pools(settings, resolver, user_id)
     signed_in = None
     if caller.session_token is not None:
         signed_in = await sessions.lookup(session, caller.session_token)
@@ -193,7 +234,7 @@ async def me(
         username=signed_in.username if signed_in else None,
         avatar=signed_in.avatar if signed_in else None,
         expires_at=signed_in.expires_at if signed_in else None,
-        manages_pools=manages_pools,
+        manages_pools=pool_manager,
         is_owner=user_id is not None and user_id in settings.owner_ids,
     )
 

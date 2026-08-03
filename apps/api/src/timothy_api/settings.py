@@ -73,9 +73,10 @@ def _snowflake_set(value: object) -> object:
     Every other list-shaped thing an operator writes in this project is comma-separated,
     and a JSON array in an environment variable is a quoting problem waiting to happen.
 
-    Anything that is not a run of digits is dropped rather than raising. This is a
-    *narrowing* setting — a typo produces a smaller set of owners, never a larger one —
-    so failing closed on the bad entry is safer than refusing to start.
+    Anything that is not a run of digits is dropped rather than raising. Every setting
+    that uses this is a *narrowing* one — a typo produces a smaller set of owners, or of
+    roles that may manage pools, never a larger one — so failing closed on the bad entry
+    is safer than refusing to start.
     """
     if isinstance(value, str):
         return frozenset(
@@ -86,8 +87,8 @@ def _snowflake_set(value: object) -> object:
     return value
 
 
-OwnerIds = Annotated[frozenset[int], NoDecode, BeforeValidator(_snowflake_set)]
-"""Discord user IDs, written `123,456`. `frozenset` because `Settings` is frozen and a
+SnowflakeSet = Annotated[frozenset[int], NoDecode, BeforeValidator(_snowflake_set)]
+"""Discord IDs, written `123,456`. `frozenset` because `Settings` is frozen and a
 mutable field would make the model unhashable."""
 
 
@@ -151,11 +152,33 @@ class Settings(BaseSettings):
     # -- domain --------------------------------------------------------------
 
     management_guild_id: int = 0
-    """The one guild whose administrators own pools and listings (ADR 0001). Zero means
-    unconfigured, and nobody holds `ADMINISTRATOR` in guild zero, so pool management is
-    closed until it is set."""
+    """The one guild pool authority is held in (ADR 0001). Zero means unconfigured, and
+    nobody holds a role in guild zero, so pool management is closed until it is set.
 
-    owner_ids: OwnerIds = frozenset()
+    Also the web UI's front door: a browser session is issued only to a member of this
+    guild (ADR 0013). Membership alone — the roles above are what authority is derived
+    from, this is only who may sign in. Zero closes login as well, and says so at
+    `/auth/login` rather than refusing everybody after the round trip to Discord.
+    """
+
+    pool_manager_role_ids: SnowflakeSet = frozenset()
+    """Roles in the management guild whose holders own pools and listings (ADR 0012).
+
+    Written as `TIMOTHY_POOL_MANAGER_ROLE_IDS=1234567890`, comma-separated if more than
+    one role should have it.
+
+    Empty closes pool management for everybody, including the management guild's
+    administrators and its owner. It never falls back to them: administering that guild
+    and curating a ban list that reaches every subscribing guild are different jobs, and
+    a fallback would silently make them the same one again — the same reasoning as
+    `owner_ids` below (ADR 0011).
+
+    Deploying this for the first time therefore needs the role created and assigned
+    before pool management works. That is the intended shape: an explicit grant, visible
+    in Discord's own role list, rather than a permission someone already had.
+    """
+
+    owner_ids: SnowflakeSet = frozenset()
     """Whoever runs this deployment. The operations view and nothing else (ADR 0011).
 
     Written as `TIMOTHY_OWNER_IDS=242024455190577152`, or a comma-separated list if more

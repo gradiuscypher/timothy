@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx2
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from timothy_api.app import create_app
 from timothy_api.jobs import JobKind
@@ -26,7 +27,7 @@ from .conftest import (
     LISTED_USER,
     MEMBER,
     OWNER,
-    POOL_ADMIN,
+    POOL_MANAGER,
     Enforcement,
     FakeOAuth,
     headers,
@@ -78,7 +79,7 @@ def _list(client: TestClient, user_id: int = LISTED_USER) -> httpx2.Response:
     return client.post(
         "/pools/spam/listings",
         json={"user_id": str(user_id), "reason": "ban evasion"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
 
 
@@ -108,7 +109,7 @@ def test_owning_the_pools_does_not_mean_running_timothy(pool: TestClient) -> Non
     responsible for the pools, not for the deployment — and this view exposes the queue,
     every server's failures, and what the settings actually are."""
     for path in ("/ops/overview", "/ops/activity", "/ops/failures", "/ops/jobs"):
-        assert pool.get(path, headers=headers(POOL_ADMIN)).status_code == 403, path
+        assert pool.get(path, headers=headers(POOL_MANAGER)).status_code == 403, path
 
 
 def test_a_guild_administrator_may_not_look(pool: TestClient) -> None:
@@ -136,7 +137,7 @@ def test_no_owner_configured_closes_the_view_for_everybody(
     unowned = settings.model_copy(update={"owner_ids": frozenset()})
 
     with TestClient(create_app(unowned, discord_port=discord, oauth_port=oauth)) as client:
-        for actor in (OWNER, POOL_ADMIN, GUILD_ADMIN, MEMBER):
+        for actor in (OWNER, POOL_MANAGER, GUILD_ADMIN, MEMBER):
             assert client.get("/ops/overview", headers=headers(actor)).status_code == 403
 
 
@@ -148,7 +149,7 @@ def test_more_than_one_owner_is_allowed_but_one_is_the_usual_case(
     with TestClient(create_app(shared, discord_port=discord, oauth_port=oauth)) as client:
         assert client.get("/ops/overview", headers=headers(OWNER)).status_code == 200
         assert client.get("/ops/overview", headers=headers(MEMBER)).status_code == 200
-        assert client.get("/ops/overview", headers=headers(POOL_ADMIN)).status_code == 403
+        assert client.get("/ops/overview", headers=headers(POOL_MANAGER)).status_code == 403
 
 
 # -- the overview ----------------------------------------------------------------------
@@ -175,6 +176,28 @@ def test_the_overview_says_whether_login_is_configured(pool: TestClient) -> None
     """A stack whose web UI nobody can log in to still comes up and still says 200 to
     every healthcheck. This is the only place that difference is visible."""
     assert _overview(pool)["login_configured"] is False
+
+
+def test_credentials_alone_are_not_a_login_anybody_can_complete(
+    settings: Settings, discord: FakeDiscord, oauth: FakeOAuth
+) -> None:
+    """Signing in needs membership of the management guild (ADR 0013), so an unset one
+    closes login as surely as a missing client secret does. Reporting `true` here would
+    send an operator looking at Discord's application settings for a problem that is in
+    their own `.env`."""
+    homeless = settings.model_copy(
+        update={
+            "discord_client_id": "an-application",
+            "discord_client_secret": SecretStr("a-secret"),
+            "public_base_url": "https://timothy.example.com",
+            "management_guild_id": 0,
+        }
+    )
+
+    with TestClient(create_app(homeless, discord_port=discord, oauth_port=oauth)) as client:
+        overview = client.get("/ops/overview", headers=headers(OWNER)).json()
+
+    assert overview["login_configured"] is False
 
 
 def test_the_overview_counts_what_timothy_holds(pool: TestClient) -> None:

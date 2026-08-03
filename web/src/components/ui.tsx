@@ -64,19 +64,107 @@ const FIELD =
   "w-full rounded-md border border-surface-border bg-surface-0 px-3 py-1.5 text-sm " +
   "placeholder:text-surface-muted focus-visible:outline-2 focus-visible:outline-accent";
 
+/**
+ * Nothing here is a credential, so no password manager should offer to fill or save it.
+ *
+ * `autocomplete="off"` alone is widely ignored — the browsers honour it for autofill but
+ * the extensions decide for themselves — so this carries each vendor's opt-out as well.
+ * Spread before `props` so a field that genuinely wants autofill can say so.
+ */
+const NO_AUTOFILL = {
+  autoComplete: "off",
+  "data-1p-ignore": "",
+  "data-lpignore": "true",
+  "data-bwignore": "",
+  "data-protonpass-ignore": "",
+  "data-form-type": "other",
+} as const;
+
 export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={cn(FIELD, "h-9", className)} {...props} />;
+  return <input className={cn(FIELD, "h-9", className)} {...NO_AUTOFILL} {...props} />;
 }
 
 export function Textarea({
   className,
   ...props
 }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={cn(FIELD, "font-mono text-[0.8125rem]", className)} {...props} />;
+  return (
+    <textarea
+      className={cn(FIELD, "font-mono text-[0.8125rem]", className)}
+      {...NO_AUTOFILL}
+      {...props}
+    />
+  );
 }
 
 export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className={cn(FIELD, "h-9", className)} {...props} />;
+  return <select className={cn(FIELD, "h-9", className)} {...NO_AUTOFILL} {...props} />;
+}
+
+/**
+ * A short set of choices, shown all at once rather than hidden behind a dropdown.
+ *
+ * Radios in a named `<fieldset>`, so the group has a name and arrow keys move through it
+ * without a keydown handler; the input itself is only visually hidden, never removed, so
+ * what a screen reader announces is a real radio group with a real checked member. The
+ * row carries the focus ring on the input's behalf — `has-[:focus-visible]` — because the
+ * thing being focused is the thing that is not drawn.
+ *
+ * For two or three options this is fewer interactions than a `<select>` and shows the
+ * whole set at rest; anything longer belongs in `Select`.
+ */
+export function ChoiceList<T extends string>({
+  label,
+  name,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  /** Groups the radios in the DOM; must be unique on the page. */
+  name: string;
+  value: T;
+  options: ReadonlyArray<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className="mb-1 text-xs font-medium tracking-wide text-surface-muted uppercase">
+        {label}
+      </legend>
+      <div className="flex flex-col">
+        {options.map((option) => {
+          const selected = option.value === value;
+          return (
+            <label
+              key={option.value}
+              className={cn(
+                "flex cursor-pointer items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm",
+                "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2",
+                "has-[:focus-visible]:outline-accent",
+                selected
+                  ? "bg-surface-2 font-medium"
+                  : "text-surface-muted hover:bg-surface-2 hover:text-surface-ink",
+              )}
+            >
+              <input
+                type="radio"
+                name={name}
+                value={option.value}
+                checked={selected}
+                onChange={() => onChange(option.value)}
+                className="sr-only"
+              />
+              <span>{option.label}</span>
+              <span aria-hidden="true" className={cn("text-accent", !selected && "invisible")}>
+                ✓
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
 }
 
 /**
@@ -140,7 +228,7 @@ export function Card({
 
 export function CardTitle({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
-    <header className="mb-3 flex items-center justify-between gap-3">
+    <header className="mb-3 flex flex-wrap items-center justify-between gap-3">
       <h2 className="text-base font-semibold">{children}</h2>
       {action}
     </header>

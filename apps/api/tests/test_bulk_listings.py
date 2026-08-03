@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from timothy_core.ports.fake import FakeDiscord
 
-from .conftest import GUILD, GUILD_ADMIN, LISTED_USER, POOL_ADMIN, Enforcement, headers
+from .conftest import GUILD, GUILD_ADMIN, LISTED_USER, POOL_MANAGER, Enforcement, headers
 
 Enqueued = Callable[[], list[tuple[str, dict[str, int]]]]
 
@@ -24,12 +24,12 @@ def _add(client: TestClient, user_ids: list[int], *, reason: str = REASON) -> ht
     return client.post(
         "/pools/spam/listings/bulk",
         json={"reason": reason, "user_ids": [str(user_id) for user_id in user_ids]},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
 
 
 def _page(client: TestClient, query: str = "") -> Any:  # noqa: ANN401 — the page as JSON
-    return client.get(f"/pools/spam/listings{query}", headers=headers(POOL_ADMIN)).json()
+    return client.get(f"/pools/spam/listings{query}", headers=headers(POOL_MANAGER)).json()
 
 
 # -- pagination ------------------------------------------------------------------------
@@ -168,7 +168,7 @@ def test_bulk_writes_one_audit_row_per_listing(pool: TestClient) -> None:
     summary row for three hundred listings cannot."""
     _add(pool, [1_000, 1_001])
 
-    entries = pool.get("/audit-log?action=listing.create", headers=headers(POOL_ADMIN)).json()
+    entries = pool.get("/audit-log?action=listing.create", headers=headers(POOL_MANAGER)).json()
 
     assert [entry["target"] for entry in entries] == [
         "listing:spam/1001",
@@ -181,10 +181,10 @@ def test_a_single_listing_is_not_marked_as_bulk(pool: TestClient) -> None:
     pool.post(
         "/pools/spam/listings",
         json={"user_id": "1000", "reason": REASON},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
 
-    entry = pool.get("/audit-log", headers=headers(POOL_ADMIN)).json()[0]
+    entry = pool.get("/audit-log", headers=headers(POOL_MANAGER)).json()[0]
 
     assert "bulk" not in entry["detail"]
 
@@ -215,7 +215,7 @@ def test_bulk_on_a_pool_that_does_not_exist_is_a_404(pool: TestClient) -> None:
     response = pool.post(
         "/pools/nowhere/listings/bulk",
         json={"reason": REASON, "user_ids": ["1000"]},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
 
     assert response.status_code == 404
@@ -230,7 +230,7 @@ def _remove(
     return client.post(
         f"/pools/spam/listings/bulk-delete?revert={str(revert).lower()}",
         json={"user_ids": [str(user_id) for user_id in user_ids]},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
 
 

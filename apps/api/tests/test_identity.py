@@ -7,7 +7,7 @@ from timothy_api.app import create_app
 from timothy_api.settings import Settings
 from timothy_core.ports.fake import FakeDiscord
 
-from .conftest import POOL_ADMIN, headers
+from .conftest import POOL_MANAGER, headers
 
 
 def test_a_call_without_the_token_is_refused(client: TestClient) -> None:
@@ -50,7 +50,7 @@ def test_a_malformed_actor_is_a_bad_request(client: TestClient) -> None:
 
 
 def test_a_well_formed_actor_is_accepted(registered: TestClient) -> None:
-    response = registered.get("/pools", headers=headers(POOL_ADMIN))
+    response = registered.get("/pools", headers=headers(POOL_MANAGER))
 
     assert response.status_code == 200
 

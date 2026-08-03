@@ -5,10 +5,10 @@ interaction deadline (ADR 0003), so the answers are cached for `PERMISSION_CACHE
 The cache is per process and in memory: it is a rate-limit shield, not a store, and
 losing it on restart costs one extra call.
 
-Two questions get asked, and they need different calls. Whether someone is an
+Three questions get asked, and they do not all take the same call. Whether someone is an
 administrator is `guild_permissions`, which answers `none()` for a non-member and so
-cannot tell "not here" from "here with nothing". Whether someone is a member at all is
-therefore `fetch_member`.
+cannot tell "not here" from "here with nothing". Whether someone is a member at all, and
+which roles they hold, are both `fetch_member`.
 """
 
 from __future__ import annotations
@@ -75,6 +75,7 @@ class PermissionResolver:
         self._discord = discord
         self._administrator: TtlCache[tuple[int, int], bool] = TtlCache(ttl, clock)
         self._membership: TtlCache[tuple[int, frozenset[int]], bool] = TtlCache(ttl, clock)
+        self._roles: TtlCache[tuple[int, int], frozenset[int]] = TtlCache(ttl, clock)
 
     async def is_administrator(self, *, guild_id: int, user_id: int) -> bool:
         """Whether the user holds `ADMINISTRATOR` in this guild.
@@ -92,6 +93,35 @@ class PermissionResolver:
         except NotFoundError:
             return self._administrator.put((guild_id, user_id), value=False)
         return self._administrator.put((guild_id, user_id), value=permissions.administrator)
+
+    async def holds_any_role(
+        self, *, guild_id: int, role_ids: frozenset[int], user_id: int
+    ) -> bool:
+        """Whether the user holds one of these roles in this guild (ADR 0012).
+
+        Cached against the roles the member *has*, not against the question asked, so
+        that changing `POOL_MANAGER_ROLE_IDS` takes effect on the next request rather
+        than at the end of a TTL that nobody can see. A non-member holds nothing, which
+        is the same answer as a member with no roles and wants no distinguishing: neither
+        may manage pools.
+
+        An empty `role_ids` is refused by the caller before it gets here, so this never
+        answers `True` for a member of the guild who holds nothing.
+        """
+        held = self._roles.get((guild_id, user_id))
+        if held is None:
+            held = self._roles.put(
+                (guild_id, user_id), value=await self._role_ids(guild_id, user_id)
+            )
+        return bool(held & role_ids)
+
+    async def _role_ids(self, guild_id: int, user_id: int) -> frozenset[int]:
+        """Ask Discord for a member's roles. A guild Timothy is not in yields none."""
+        try:
+            member = await self._discord.fetch_member(guild_id=guild_id, user_id=user_id)
+        except NotFoundError:
+            return frozenset()
+        return frozenset() if member is None else member.role_ids
 
     async def is_member_of_any(self, *, guild_ids: Iterable[int], user_id: int) -> bool:
         """Whether the user is in any of these guilds.

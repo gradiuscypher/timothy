@@ -16,7 +16,7 @@ from .conftest import (
     GUILD_ADMIN,
     LISTED_USER,
     MEMBER,
-    POOL_ADMIN,
+    POOL_MANAGER,
     Enforcement,
     headers,
 )
@@ -35,7 +35,7 @@ def enforced(client: TestClient, discord: FakeDiscord, enforcement: Enforcement)
         client.post(
             "/pools/spam/listings",
             json={"user_id": str(user_id), "reason": "raiding"},
-            headers=headers(POOL_ADMIN),
+            headers=headers(POOL_MANAGER),
         )
     discord.fail("ban", guild_id=GUILD, user_id=OTHER_USER, error=ForbiddenError("no rights"))
     enforcement.drain()
@@ -85,7 +85,9 @@ def test_only_that_guilds_administrators_may_read_it(registered: TestClient) -> 
     """It names the users this guild has banned and why, which the management guild's
     pool owners do not need in order to own pools."""
     assert (
-        registered.get(f"/guilds/{GUILD}/enforcement", headers=headers(POOL_ADMIN)).status_code
+        registered.get(
+            f"/guilds/{GUILD}/enforcement", headers=headers(POOL_MANAGER)
+        ).status_code
         == 403
     )
     assert (

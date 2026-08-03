@@ -22,9 +22,13 @@ class Settings(BaseSettings):
     """Where the pool and listing commands are registered.
 
     The same value the backend reads, and it has to be: registering `/add_ban` in a guild
-    whose administrators the backend will refuse produces a command that is visible and
-    always fails. Unset registers them nowhere, which is the safe direction — nobody is
-    an administrator of guild 0."""
+    where nobody holds pool authority produces a command that is visible and always
+    fails. Unset registers them nowhere, which is the safe direction — nobody holds a
+    role in guild 0.
+
+    Who may *run* those commands is a role there, not `ADMINISTRATOR` (ADR 0012), and the
+    backend is what enforces it. Discord's own default makes them administrator-only
+    until somebody points them at that role under Integrations."""
 
     gateway_enabled: bool = True
     """Connect to Discord at all.

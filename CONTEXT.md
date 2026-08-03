@@ -34,9 +34,15 @@ A Discord server. Always `guild`, never `server`, matching Discord's own API.
 _Avoid_: server
 
 **Management Guild**:
-The single guild whose administrators may create pools and manage listings. Authority
-over pools is derived from holding Administrator here.
+The single guild that pool authority is held in. Authority over pools is derived from
+holding the Pool Manager Role here — not from administering the guild (ADR 0012). Plain
+membership of it is what the web UI's login requires (ADR 0013): a door, not a grant.
 _Avoid_: AM server, admin server, home guild
+
+**Pool Manager**:
+Someone holding a role named in `POOL_MANAGER_ROLE_IDS` in the management guild. They own
+pools and listings, and read the audit log. They own nothing in any subscribing guild.
+_Avoid_: pool admin, pool owner, list admin
 
 **Subscription**:
 A guild's decision to enforce a pool, held at a level of either `ban` or `warn`.

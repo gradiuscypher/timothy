@@ -125,6 +125,13 @@ to get past, so it is worth deciding deliberately rather than by accident.
 `TIMOTHY_PUBLIC_BASE_URL` turn on browser login. Leaving them unset closes it — the stack
 comes up and `/api/auth/login` answers 503 naming what is missing.
 
+**Only members of `TIMOTHY_MANAGEMENT_GUILD_ID` can sign in** (ADR 0013). Membership is
+the whole test — no role and no permission there is required — and anybody else who
+completes the Discord consent screen lands back on the login page being told so, with no
+session issued. That includes whoever runs the deployment: `TIMOTHY_OWNER_IDS` is what
+opens `/ops`, but reaching it in a browser means being in the management server. An unset
+`TIMOTHY_MANAGEMENT_GUILD_ID` therefore closes login as well, with the same 503.
+
 On the Discord application, under **OAuth2 → Redirects**, add the redirect URI **exactly**
 as `<TIMOTHY_PUBLIC_BASE_URL>/api/auth/callback`. Discord compares the string, and a
 trailing slash is a failed login with no useful message. The backend requests
@@ -185,9 +192,14 @@ curl -X PUT https://timothy.yourdomain.com/api/guilds/<guild id> \
      -H "X-Timothy-Actor: system"
 ```
 
-Then sign in at `https://timothy.yourdomain.com`. What you can see depends on real Discord
-permissions: the server pages need `ADMINISTRATOR` in that server, the pool pages need it
-in `TIMOTHY_MANAGEMENT_GUILD_ID`, and `/ops` needs your user ID in `TIMOTHY_OWNER_IDS`.
+Then sign in at `https://timothy.yourdomain.com`, from an account that is in the
+management server — anybody else is refused at the door (ADR 0013). What you can see
+depends on real Discord
+permissions: the server pages need `ADMINISTRATOR` in that server, the pool pages need one
+of the roles in `TIMOTHY_POOL_MANAGER_ROLE_IDS` held in `TIMOTHY_MANAGEMENT_GUILD_ID`, and
+`/ops` needs your user ID in `TIMOTHY_OWNER_IDS`. Administering the management server is
+deliberately not enough for the pool pages (ADR 0012) — if the Pools tab is missing, check
+that you hold the role and that the variable names it.
 
 Two things to be aware of: the tunnel hostname is a **public URL**, not localhost — anyone
 who finds it reaches the login page, which is what the internal token and the session are
@@ -230,9 +242,12 @@ give the same output and a rehearsal is evidence about the real run.
 
 The bot registers them itself, on startup, from `apps/bot/src/timothy_bot/commands/` —
 there is no separate upload step. Two sets: the guild-configuration commands are global,
-and the pool and listing commands exist only in `TIMOTHY_MANAGEMENT_GUILD_ID`. Both are
-administrator-only and unavailable in DMs, which the backend enforces again on its own
-account after resolving the caller against Discord.
+and the pool and listing commands exist only in `TIMOTHY_MANAGEMENT_GUILD_ID`. Both ship
+administrator-only and unavailable in DMs, which is Discord deciding who *sees* them; you
+can point the pool commands at the pool manager role instead, under Server Settings →
+Integrations. Either way the backend resolves the caller against Discord and enforces the
+real rule on its own account — the pool commands need the role, not `ADMINISTRATOR`
+(ADR 0012).
 
 `apps/bot/tests/command_surface.json` is the surface as it shipped before the rewrite;
 the tests compare against it, so a rename that would cost a moderator their muscle memory
@@ -273,9 +288,9 @@ and JavaScript numbers are not.
 ## Watching it run
 
 `/ops` in the web UI, for whoever is named in `TIMOTHY_OWNER_IDS` — set that to your own
-Discord user ID. Administering the management server makes somebody responsible for the
-pools, not for Timothy itself, so this is a separate and much smaller list (ADR 0011).
-Unset closes the page for everybody; it never falls back.
+Discord user ID. Managing the pools makes somebody responsible for the lists, not for
+Timothy itself, so this is a separate and much smaller list (ADR 0011). Unset closes the
+page for everybody; it never falls back.
 
 It answers the questions that come up during a cutover and afterwards: is dry run still on, are the
 workers running, how far through the sweep is it, which server is producing all the

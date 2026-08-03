@@ -166,6 +166,9 @@ class DiscordAdapter:
             guild_id=guild_id,
             user_id=member.id,
             display_name=member.display_name,
+            # `member.roles` leads with `@everyone`, whose ID is the guild's. Carrying it
+            # would make a `POOL_MANAGER_ROLE_IDS` that named the guild admit everybody.
+            role_ids=frozenset(role.id for role in member.roles if role.id != guild_id),
         )
 
     async def guild_permissions(self, *, guild_id: int, user_id: int) -> GuildPermissions:

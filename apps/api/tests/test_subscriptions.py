@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from timothy_api.jobs import JobKind
 
-from .conftest import GUILD, GUILD_ADMIN, MEMBER, POOL_ADMIN, headers
+from .conftest import GUILD, GUILD_ADMIN, MEMBER, POOL_MANAGER, headers
 
 Enqueued = Callable[[], list[tuple[str, dict[str, int]]]]
 
@@ -29,7 +29,7 @@ def test_the_pools_owner_has_no_say_over_another_guild(pool: TestClient) -> None
     response = pool.put(
         f"/guilds/{GUILD}/subscriptions/spam",
         json={"level": "ban"},
-        headers=headers(POOL_ADMIN),
+        headers=headers(POOL_MANAGER),
     )
 
     assert response.status_code == 403
@@ -172,7 +172,7 @@ def test_deleting_a_pool_takes_its_subscriptions_with_it(pool: TestClient) -> No
         headers=headers(GUILD_ADMIN),
     )
 
-    pool.delete("/pools/spam", headers=headers(POOL_ADMIN))
+    pool.delete("/pools/spam", headers=headers(POOL_MANAGER))
 
     assert pool.get(f"/guilds/{GUILD}/subscriptions", headers=headers(GUILD_ADMIN)).json() == []
 
@@ -180,8 +180,8 @@ def test_deleting_a_pool_takes_its_subscriptions_with_it(pool: TestClient) -> No
 def test_deleting_a_pool_with_revert_enqueues_one(pool: TestClient, enqueued: Enqueued) -> None:
     """The pool row goes; the enforcement outcomes it caused do not, which is what leaves
     the revert able to find the bans afterwards (ADR 0005)."""
-    created = pool.get("/pools/spam", headers=headers(POOL_ADMIN)).json()
+    created = pool.get("/pools/spam", headers=headers(POOL_MANAGER)).json()
 
-    pool.delete("/pools/spam?revert=true", headers=headers(POOL_ADMIN))
+    pool.delete("/pools/spam?revert=true", headers=headers(POOL_MANAGER))
 
     assert enqueued()[-1] == (JobKind.REVERT_POOL.value, {"pool_id": created["id"]})
