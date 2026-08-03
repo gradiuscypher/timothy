@@ -109,10 +109,20 @@ comment is amended rather than left quietly contradicted.
 ## A year of logs is a second record of who did what
 
 Deliberately accepted, and worth writing down. A year of logs holds Discord user IDs,
-guild IDs and — through `client_logs` and enforcement messages — ban reasons. Timothy now
-keeps two overlapping records of who did what: `audit_log`, permanent by design and gated
-by `TIMOTHY_OWNER_IDS` (ADR 0011), and these logs, gated only by shell access on the host.
-That is a conscious state rather than an accident.
+guild IDs, ban reasons — through `client_logs` and enforcement messages — and **client IP
+addresses**. Timothy now keeps two overlapping records of who did what: `audit_log`,
+permanent by design and gated by `TIMOTHY_OWNER_IDS` (ADR 0011), and these logs, gated
+only by shell access on the host. That is a conscious state rather than an accident.
+
+The IP addresses are new with this ADR and are the sharpest of these. nginx used to log
+cloudflared's container address — the same 172.x on every line, useless to a reader and
+personal data about nobody. `realip` now recovers the true client address from
+`CF-Connecting-IP`, which makes the access log worth reading and simultaneously turns it
+into a year-long record of who connected from where, correlatable with the Discord IDs on
+neighbouring lines. Worth it: "was this one person or thirty" is a question the log could
+not previously answer at all. But it is a real change in what the store holds, not a
+formatting improvement, and shortening `TIMOTHY_LOG_RETENTION` is the lever if that trade
+ever stops being the right one.
 
 ## Consequences
 
