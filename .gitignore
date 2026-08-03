@@ -17,6 +17,10 @@ web/dist/
 # (web/src/api/schema.d.ts) is committed; this is not.
 web/openapi.json
 
+# Editors
+*.swp
+*.swo
+
 # Local
 .env
 *.sqlite

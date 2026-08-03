@@ -190,6 +190,11 @@ no such call — but it is the one breaking change in this phase.
 
 ## Carried forward
 
+> **Superseded by [`post-rewrite.md`](./post-rewrite.md)**, written after the staging
+> deployment went up. The list below is what was known when phase 6 was declared complete;
+> the newer one has what bringing it up actually found. Everything above this line is still
+> accurate.
+
 - **Nothing has been migrated yet.** Unchanged from phase 5: the real dump, the real
   snapshot and the real cutover are an operator running `docs/cutover.md`. `verify` and
   `diff` have been rehearsed against production data but the cutover has not happened.

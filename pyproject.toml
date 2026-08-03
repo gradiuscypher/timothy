@@ -66,6 +66,12 @@ ignore = [
     # module. It lives beside the thing it generates rather than in the Python tree.
     "INP001",
 ]
+"scripts/*.py" = [
+    # Operator scripts, piped into a running container rather than imported. Their
+    # output is the whole point of running them, so it goes to stdout as a document.
+    "INP001",
+    "T201",
+]
 "apps/api/src/timothy_api/**" = [
     # `HTTPException(detail=...)` is the message the API's caller reads — the API's
     # contract, not an exception whose text belongs in its class.

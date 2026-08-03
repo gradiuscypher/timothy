@@ -166,6 +166,22 @@ who finds it reaches the login page, which is what the internal token and the se
 there for. And the stack writes to a Docker volume, so `docker compose down -v` is how you
 throw the test database away.
 
+### When Discord says `50001 Missing Access`
+
+Uploading commands to the management guild fails with that error for three different
+reasons, and the error cannot tell them apart. Ask Discord instead — read-only, and it
+picks up the running stack's own environment:
+
+```sh
+docker compose run --rm --no-deps -T --entrypoint python bot - \
+    < scripts/check-discord-access.py
+```
+
+It prints which application the token belongs to, every guild the bot is actually in, and
+whether the application is authorised for commands there. That last one is the
+`applications.commands` **scope**, which is granted by the invite URL and is *not* one of
+the bot's permissions — which is why re-inviting with the same link changes nothing.
+
 ## Migrating from the old bot
 
 `migration/` holds the one-shot Mongo → SQLite import and the two checks that decide
