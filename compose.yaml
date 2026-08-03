@@ -1,11 +1,32 @@
 name: timothy
 
-# Nothing publishes a port. Cloudflare Tunnel is the only ingress and it fronts nginx,
-# which serves the SPA and proxies /api to the backend. See PLAN.md, "Shape".
+# One port is published, to 127.0.0.1 only: VictoriaLogs' UI on 9428, reached with
+# `ssh -L 9428:localhost:9428 you@host`. Nothing else is. Cloudflare Tunnel is the only
+# ingress from the internet and it fronts nginx, which serves the SPA and proxies /api to
+# the backend. See PLAN.md, "Shape".
 #
-# Every service also mounts ./logs at /logs and writes a file there — see ADR 0014. The
-# daemon's own log buffer goes away with the container, and "reproduce it and I'll look"
-# is not an answer when the thing that broke was a fan-out at 3am.
+# The `127.0.0.1:` prefix on that binding is load-bearing and not decoration. A bare
+# `9428:9428` would have Docker write its own iptables rules and publish the store to the
+# network regardless of what UFW says — and VictoriaLogs has no authentication of its
+# own. The loopback bind *is* the authentication: anyone with a shell here reads every
+# log. See ADR 0015.
+#
+# Logs go two ways during this transition. Every service still mounts ./logs at /logs and
+# writes a file there (ADR 0014), and every service's stdout is also read off the Docker
+# socket by the collector and stored in VictoriaLogs (ADR 0015). The file layer goes away
+# once the store has proven itself; until then the safety net stays up.
+
+# The daemon's own buffer, bounded. It is no longer the durable record — that is
+# VictoriaLogs — but `docker compose logs` is still the first thing anyone types, so it
+# keeps a few hundred megabytes of recent history and no more. The `local` driver rather
+# than `json-file` because it costs less to write and compresses what it rotates; the
+# trade is that the files under /var/lib/docker are no longer tailable as JSON, which
+# nothing here does.
+x-logging: &logging
+  driver: local
+  options:
+    max-size: 10m
+    max-file: "3"
 
 services:
   logs:
@@ -24,6 +45,86 @@ services:
     volumes:
       - ./logs:/logs
     networks: [timothy]
+    logging: *logging
+
+  victorialogs:
+    # Where the logs actually live now. One year, in a named volume.
+    #
+    # Pinned by tag and digest. VictoriaLogs holds no credential and listens only on
+    # loopback, so the digest here is ordinary reproducibility rather than the
+    # host-compromise argument that pins the collector below.
+    image: victoriametrics/victoria-logs:v1.52.0@sha256:47b820890d64c4575a2a0a46415dcd8a4fd59a0f1fcd6a377693d7aea639442e
+    restart: unless-stopped
+    command:
+      - -storageDataPath=/victoria-logs-data
+      - -httpListenAddr=:9428
+      # A year, because the point of this is answering "when did this start?" about
+      # something from eight months ago.
+      - -retentionPeriod=${TIMOTHY_LOG_RETENTION:-1y}
+      # The second bound, and it is load-bearing precisely because the first one is so
+      # long: a runaway producer — a client-error flood, or TIMOTHY_LOG_LEVEL=debug left
+      # on through a sweep — has a year to fill the disk. Note the semantics: at the cap
+      # VictoriaLogs drops the OLDEST day partitions, so retention silently shortens
+      # rather than ingestion failing. That is the right failure mode and it is a quiet
+      # one, so it is worth looking at occasionally.
+      - -retention.maxDiskSpaceUsageBytes=${TIMOTHY_LOG_MAX_DISK:-10GB}
+    ports:
+      # Loopback only — see the header. `ssh -L 9428:localhost:9428 you@host`, then
+      # http://localhost:9428/select/vmui/.
+      - "127.0.0.1:9428:9428"
+    volumes:
+      - victorialogs:/victoria-logs-data
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [timothy]
+    logging: *logging
+
+  collector:
+    # Vector, reading every container's stdout off the Docker socket. Config in
+    # vector/vector.yaml.
+    #
+    # MOUNTING THE DOCKER SOCKET IS A HOST-ROOT GRANT. `:ro` stops writes to the socket
+    # *file* and constrains nothing about the API reachable through it — a process
+    # holding this can start a privileged container, mount /, and read every secret on
+    # the machine. Accepted deliberately: the trust boundary here is already "whoever can
+    # run docker on this host", and a socket proxy is a third container to keep current.
+    # If that ever stops feeling right, docker-socket-proxy drops in by pointing
+    # `docker_host` at it and nothing else changes.
+    #
+    # What we do instead, none of which constrains the socket but all of which shrinks
+    # everything around it: pin the DIGEST as well as the tag, because this is the one
+    # container where a supply-chain substitution is host compromise; publish no port, so
+    # the only inputs are the socket and log content itself; drop every capability and
+    # take a read-only root filesystem.
+    #
+    # It runs as root. The pinned image sets no USER, ships no unprivileged account, and
+    # owns /var/lib/vector as root — so `user:` plus `group_add` for the host's docker
+    # gid would need an init container to chown the buffer volume, which is the exact
+    # machinery ADR 0015 exists to delete. Checked rather than assumed, because a
+    # silent, mode-shaped failure is what went wrong with logrotate.
+    image: timberio/vector:0.57.0-alpine@sha256:19e3526faf4d4b1ed0c28a0d68d4cc3a1e13e437099986a5b7a768707907497c
+    restart: unless-stopped
+    depends_on:
+      victorialogs:
+        condition: service_started
+    command: ["--config", "/etc/vector/vector.yaml"]
+    environment:
+      # Vector's own logs, which are not collected — it excludes itself, or every line
+      # about posting a line would become a line to post. `warn` keeps its startup
+      # chatter out of `docker compose logs` without hiding a broken sink.
+      VECTOR_LOG: ${TIMOTHY_COLLECTOR_LOG_LEVEL:-warn}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+      # Checkpoints and the disk buffer. The checkpoints are what bound how much is
+      # re-read or skipped across a restart.
+      - collector:/var/lib/vector
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [timothy]
+    logging: *logging
 
   backend:
     build:
@@ -36,6 +137,10 @@ services:
     environment:
       TIMOTHY_LOG_LEVEL: ${TIMOTHY_LOG_LEVEL:-info}
       TIMOTHY_LOG_DIR: /logs
+      # Spelled out rather than left to the default, like everything else here. The
+      # collector needs fields, not sentences. Cost: `docker compose logs backend` is now
+      # JSON — `| jq -r .message` undoes it, and vmui is the better place to read anyway.
+      TIMOTHY_LOG_FORMAT: json
       TIMOTHY_DATABASE_URL: sqlite+aiosqlite:////data/timothy.db
       TIMOTHY_DISCORD_TOKEN: ${TIMOTHY_DISCORD_TOKEN:?set TIMOTHY_DISCORD_TOKEN in .env}
       TIMOTHY_INTERNAL_TOKEN: ${TIMOTHY_INTERNAL_TOKEN:?set TIMOTHY_INTERNAL_TOKEN in .env}
@@ -77,6 +182,7 @@ services:
       retries: 5
       start_period: 10s
     networks: [timothy]
+    logging: *logging
 
   bot:
     build:
@@ -101,7 +207,9 @@ services:
       TIMOTHY_SYNC_COMMANDS: ${TIMOTHY_SYNC_COMMANDS:-true}
       TIMOTHY_LOG_LEVEL: ${TIMOTHY_LOG_LEVEL:-INFO}
       TIMOTHY_LOG_DIR: /logs
+      TIMOTHY_LOG_FORMAT: json
     networks: [timothy]
+    logging: *logging
 
   web:
     build:
@@ -128,6 +236,7 @@ services:
       # nginx has no business writing to somebody's font licence.
       - ${TIMOTHY_BERKELEY_MONO_DIR:-./web/public/fonts/berkeley}:/usr/share/nginx/html/fonts/berkeley:ro
     networks: [timothy]
+    logging: *logging
 
   cloudflared:
     image: cloudflare/cloudflared:2026.7.3
@@ -151,9 +260,12 @@ services:
       TUNNEL_LOGDIRECTORY: /logs
       TUNNEL_LOGLEVEL: ${CLOUDFLARE_TUNNEL_LOGLEVEL:-info}
     networks: [timothy]
+    logging: *logging
 
 volumes:
   data:
+  victorialogs:
+  collector:
 
 networks:
   timothy:

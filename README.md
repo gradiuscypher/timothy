@@ -303,50 +303,91 @@ not true.
 
 ### Logs
 
-Every service writes into `./logs/` on the host, and the files survive the containers
-being rebuilt or recreated (ADR 0014):
+Every service writes JSON to stdout. A collector reads it off the Docker socket and stores
+it in VictoriaLogs, in a named volume, for a year (ADR 0015). That is what makes "when did
+this start?" answerable eight months later.
 
-```
-logs/backend.log      JSON lines — the API, the worker, the sweeper, uvicorn
-logs/bot.log          JSON lines — the gateway client and the relay
-logs/web-access.log   nginx, one line per request
-logs/web-error.log    nginx
-logs/cloudflared.log  the tunnel
-```
+`docker compose logs` still works for recent history — the daemon keeps a bounded buffer
+behind the collector — but the backend and bot lines are JSON now, so `| jq -r .message`
+is worth having in your shell history.
 
-`docker compose logs` still works and shows the same thing for the current containers;
-the difference is that these outlive them, which is what makes "when did this start?"
-answerable.
+#### Reading them
 
-Every file rolls at 10MB and keeps nine behind the live one, so each tops out at 100MB and
-the directory needs no attention. Nothing on the host does that — the Python services
-rotate themselves, nginx runs `logrotate` inside its own container, and cloudflared
-rotates its own.
-
-Everything a process is unhappy about is at `ERROR` or above, and the JSON lines are
-built to be filtered:
+Nothing is published to the network. VictoriaLogs has no authentication of its own, and
+**the loopback binding is the authentication**: anyone with a shell on the host reads
+every log. Forward the port and open the UI:
 
 ```bash
-# Every error anywhere in the stack, most recent last.
-grep -h '"level":"ERROR"' logs/backend.log logs/bot.log
-
-# Just the tracebacks, readable.
-jq -r 'select(.exception) | "\(.ts) \(.logger)\n\(.exception)"' logs/backend.log
-
-# What happened to one guild.
-grep 100000000000000002 logs/*.log
+ssh -L 9428:localhost:9428 you@host
+# then: http://localhost:9428/select/vmui/
 ```
 
-A React crash in the web UI is posted to the backend by the SPA and appears in
-`backend.log` under the logger `timothy.web`, with the component stack in
-`extra.client_stack` — a blank page in somebody's browser leaves a record on the host.
+Queries are [LogsQL](https://docs.victoriametrics.com/victorialogs/logsql/). A bare word
+is a full-text search; `field:=value` is an exact field match; `|` starts a pipe.
 
-**Credentials are stripped before anything is written.** The bot token, the internal
-token and the OAuth client secret are registered by exact value, and labelled secrets
-(`token=`, `Authorization: Bearer`, `?code=`) are caught by shape on top of that. nginx
-logs the route without its query string, so an OAuth code never reaches the file at all.
-It is worth grepping a log for a token you know before pasting it anywhere — but if
-something did get through, that is a bug in `packages/logs`, not something to work
-around.
+```logsql
+# Every error anywhere in the stack, last 24h (set the range in vmui).
+level:=ERROR
+
+# Just the backend's tracebacks.
+service:=backend AND exception:*
+
+# What happened to one guild, across every service.
+100000000000000002
+
+# What the browser has been crashing on.
+logger:="timothy.web" | fields _time, _msg, extra.client_url
+
+# Which service is loudest right now.
+* | stats by (service) count() lines
+```
+
+The same from a shell, without the UI:
+
+```bash
+curl -s http://localhost:9428/select/logsql/query \
+  --data-urlencode 'query=level:=ERROR' --data-urlencode 'limit=50' | jq .
+```
+
+The indexed fields are `service` and `container_name`. Everything else — `level`,
+`logger`, `source`, `extra.*` — is searchable but not a stream dimension, deliberately:
+nothing per-user becomes an index key.
+
+A React crash in the web UI is posted to the backend by the SPA and arrives under the
+logger `timothy.web`, with the component stack in `extra.client_stack` — a blank page in
+somebody's browser leaves a record on the host.
+
+Healthcheck access lines are dropped at the collector. The healthcheck runs every 10s and
+would otherwise be three million lines a year and the largest thing in the store.
+
+#### Retention
+
+A year (`TIMOTHY_LOG_RETENTION`), with a 10GB cap (`TIMOTHY_LOG_MAX_DISK`) behind it. At
+the cap VictoriaLogs drops the **oldest** data, so a runaway producer shortens retention
+instead of filling the disk. That fails quietly by design: if a query from ten months ago
+comes back empty, this is the first thing to check.
+
+**Credentials are stripped in-process, before anything leaves it.** The bot token, the
+internal token and the OAuth client secret are registered by exact value, and labelled
+secrets (`token=`, `Authorization: Bearer`, `?code=`) are caught by shape on top of that.
+nginx logs the route without its query string, so an OAuth code never reaches a log at
+all. CI asserts this end to end — a request carrying a known fake token, then a query
+proving the line arrived and the token did not. If something did get through, that is a
+bug in `packages/logs`, not something to work around.
+
+**Mounting the Docker socket is a host-root grant.** The collector reads
+`/var/run/docker.sock`, and `:ro` constrains nothing about the API reachable through it.
+Accepted deliberately — the trust boundary here is already whoever can run `docker` on
+this host — but it is a real grant and ADR 0015 sets out what is done to shrink everything
+around it.
+
+#### The file layer, on its way out
+
+Every service also still writes into `./logs/` on the host (ADR 0014), rolling at 10MB and
+keeping nine behind the live one. Both paths run during the transition, so the old safety
+net stays up while the store is evaluated; the files and their rotation machinery go away
+in a follow-up. Until then `grep '"level":"ERROR"' logs/backend.log` still works.
 
 Turn the files off with an empty `TIMOTHY_LOG_DIR`; logging falls back to stdout only.
+`TIMOTHY_LOG_FORMAT` chooses what stdout looks like — `console` for a person, `json` for
+the collector, which is what compose sets.

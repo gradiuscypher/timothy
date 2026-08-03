@@ -27,6 +27,7 @@ def main() -> None:
         "backend",
         level=settings.log_level,
         log_dir=settings.log_dir,
+        log_format=settings.log_format,
         # Everything this process holds that must never reach a log file. The Discord
         # token and the internal token both travel in headers that libraries below us
         # will happily include in an error message; the client secret is posted to

@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     """Where the rotating log file goes, in the directory the backend and nginx also
     write to. Empty turns the file off and leaves logging on stdout."""
 
+    log_format: str = "console"
+    """How stdout is written: `console` or `json` (see `timothy_logs.FORMATS`). Compose
+    sets `json`, for the collector; the default stays readable for a bare process."""
+
     internal_token: SecretStr = SecretStr("")
     """What the bot presents to the backend on every call. The bot asserts identity —
     whose interaction this is — and never authority; the backend resolves that itself

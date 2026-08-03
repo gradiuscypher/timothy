@@ -22,3 +22,7 @@ web
 # image and never committed. Anchored, or it also excludes `packages/logs/` — which the
 # backend and the bot both install — and the build fails to resolve the workspace.
 /logs/
+
+# The collector's config, bind-mounted into a pinned upstream image. Nothing here is
+# built, so it has no business in any build context.
+/vector/

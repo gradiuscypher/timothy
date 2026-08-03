@@ -208,6 +208,69 @@ def test_no_log_directory_leaves_the_console(
     assert "stdout only" in capsys.readouterr().out
 
 
+def test_console_format_writes_a_sentence(
+    tmp_path: Path, root: logging.Logger, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The default, for a person running a bare process outside compose."""
+    logs.configure("test", log_dir=tmp_path, log_format="console")
+
+    logging.getLogger("timothy.example").info("readable by eye")
+
+    line = capsys.readouterr().out.strip()
+    assert "timothy.example: readable by eye" in line
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(line)
+
+
+def test_json_format_writes_one_object_per_line(
+    tmp_path: Path, root: logging.Logger, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """What compose sets, and what the collector parses into fields.
+
+    The three field names asserted here are the ones VictoriaLogs is told to index —
+    `ts` as `_time`, `message` as `_msg`, `service` as a stream field (ADR 0015).
+    Renaming any of them silently unshapes everything in the store, so they are pinned
+    by a test rather than by a comment.
+    """
+    logs.configure("test", log_dir=tmp_path, log_format="json")
+
+    logging.getLogger("timothy.example").info("readable by machine", extra={"guild_id": 7})
+
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["message"] == "readable by machine"
+    assert payload["service"] == "test"
+    assert payload["ts"]
+    assert payload["extra"]["guild_id"] == 7
+
+
+def test_an_unrecognised_format_falls_back_to_the_console(
+    tmp_path: Path, root: logging.Logger, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A typo in TIMOTHY_LOG_FORMAT must not be the thing that stops the process — the
+    logs are how a bad configuration explains itself."""
+    logs.configure("test", log_dir=tmp_path, log_format="jsno")
+
+    logging.getLogger("timothy.example").info("still running")
+
+    assert "still running" in capsys.readouterr().out
+
+
+def test_a_secret_never_reaches_stdout_as_json_either(
+    tmp_path: Path, root: logging.Logger, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Redaction is the half of ADR 0014 that survives, and it matters more here: an
+    unredacted line now lands in an indexed, queryable store rather than a flat file."""
+    logs.configure("test", log_dir=tmp_path, log_format="json", secrets=[TOKEN])
+
+    logging.getLogger("timothy.example").info("connecting with %s", TOKEN)
+
+    out = capsys.readouterr().out
+    assert TOKEN not in out
+    assert logs.REDACTED in json.loads(out.strip())["message"]
+
+
 def test_an_unhandled_exception_is_logged_rather_than_printed(
     tmp_path: Path, root: logging.Logger
 ) -> None:

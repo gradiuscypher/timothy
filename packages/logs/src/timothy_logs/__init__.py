@@ -50,7 +50,19 @@ machine, and a disk filled by logging is an outage caused by the thing meant to 
 outages."""
 
 CONSOLE_FORMAT: Final = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
-"""What `docker compose logs` shows. The file gets JSON; a terminal gets a sentence."""
+"""What stdout shows under `TIMOTHY_LOG_FORMAT=console`. A terminal gets a sentence."""
+
+FORMATS: Final = ("console", "json")
+"""How stdout is written, spelled as in `TIMOTHY_LOG_FORMAT`.
+
+`console` is the default because a bare `timothy-api` outside compose is read by a person.
+`json` is what compose sets: the collector needs fields, not sentences, and JSON on stdout
+is what makes a line queryable once it reaches VictoriaLogs (ADR 0015). The cost is that
+`docker compose logs backend` becomes JSON, which `| jq -r .message` undoes.
+
+Unrecognised values fall back to `console` rather than raising. Logging is the thing that
+explains a bad configuration; it is a poor choice of thing to have refuse to start over
+one."""
 
 REDACTED: Final = "[REDACTED]"
 
@@ -190,12 +202,17 @@ greppable."""
 
 
 class JsonFormatter(RedactingFormatter):
-    """One JSON object per line, for the file.
+    """One JSON object per line — always the file, and stdout under `json`.
 
-    JSON rather than the console's sentence because these files are read by `jq` as often
-    as by eye — "every ERROR from the worker on the 3rd" is a filter over fields, not a
-    regex over prose. The exception, when there is one, carries its full traceback as a
-    single string field, so a stack trace stays one grep hit rather than forty.
+    JSON rather than the console's sentence because this is read by a machine as often as
+    by eye: `jq` over the file, and LogsQL over the store the collector posts it to.
+    "every ERROR from the worker on the 3rd" is a filter over fields, not a regex over
+    prose. The exception, when there is one, carries its full traceback as a single string
+    field, so a stack trace stays one hit rather than forty.
+
+    The field names are the ones VictoriaLogs is told to index: `ts` becomes `_time`,
+    `message` becomes `_msg`, and `service` is a stream field (ADR 0015). Renaming any of
+    those three means changing the collector's insert parameters to match.
     """
 
     def __init__(self, redactor: Redactor, service: str) -> None:
@@ -231,6 +248,7 @@ def configure(
     *,
     level: str = "INFO",
     log_dir: Path | str | None = None,
+    log_format: str = "console",
     secrets: Iterable[str] = (),
 ) -> Redactor:
     """Set up logging for this process and return the redactor it installed.
@@ -245,6 +263,8 @@ def configure(
             leaves the console handler as the only one: a log directory that is missing
             or read-only is a deployment mistake, and a process that refuses to start
             over it is a worse outcome than one that says so and carries on to stdout.
+        log_format: how stdout is written — see :data:`FORMATS`. Does not affect the
+            file, which is always JSON.
         secrets: exact values to blank out wherever they appear. Pass everything the
             process holds — see :class:`Redactor`.
 
@@ -259,7 +279,10 @@ def configure(
     root.setLevel(level.upper())
 
     console = logging.StreamHandler(sys.stdout)
-    console.setFormatter(RedactingFormatter(redactor, CONSOLE_FORMAT))
+    if log_format.lower() == "json":
+        console.setFormatter(JsonFormatter(redactor, service))
+    else:
+        console.setFormatter(RedactingFormatter(redactor, CONSOLE_FORMAT))
     root.addHandler(console)
 
     handler = _file_handler(service, log_dir, redactor)

@@ -129,6 +129,13 @@ class Settings(BaseSettings):
     `timothy-api` outside compose.
     """
 
+    log_format: str = "console"
+    """How stdout is written: `console` or `json` (see `timothy_logs.FORMATS`).
+
+    Defaults to the readable one, because the default reader is a person running this
+    outside compose. Compose sets `json`, which is what the collector parses into fields.
+    """
+
     # -- credentials ---------------------------------------------------------
 
     discord_token: SecretStr = SecretStr("")

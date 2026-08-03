@@ -50,6 +50,7 @@ def main() -> None:
         "bot",
         level=settings.log_level,
         log_dir=settings.log_dir,
+        log_format=settings.log_format,
         # discord.py puts the token in the `Authorization` header it builds, and reports
         # a failed login by showing the request it made. The internal token travels the
         # same way to the backend.

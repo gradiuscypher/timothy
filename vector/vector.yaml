@@ -1,0 +1,121 @@
+# The collector. Reads every container's stdout off the Docker socket, shapes it into
+# the field model VictoriaLogs indexes, and posts it there. See ADR 0015.
+#
+# Nothing in here parses untrusted input except `parse_json` on a log line, which is the
+# one place a malicious log could reach a parser bug. That is why this process listens on
+# no port and holds no capabilities — see the `collector` service in compose.yaml.
+
+data_dir: /var/lib/vector
+
+sources:
+  containers:
+    type: docker_logs
+    docker_host: unix:///var/run/docker.sock
+    # The two log-plumbing containers are excluded, and the collector's own exclusion is
+    # the load-bearing one: without it, every line Vector writes about posting a line
+    # becomes a line to post. Matched on name prefix, so the compose replica suffix
+    # (`-1`) does not need spelling out.
+    exclude_containers:
+      - timothy-collector
+      - timothy-victorialogs
+
+transforms:
+  shaped:
+    type: remap
+    inputs: [containers]
+    source: |
+      name = string!(.container_name)
+
+      # The service name comes from compose's own label rather than from slicing the
+      # container name. `timothy-backend-1` only parses back to `backend` if you already
+      # know the project is called `timothy` — run the same file under any other project
+      # name and every service is silently misnamed, which is a stream-field change and
+      # so unmissable in vmui and invisible everywhere else. The label is what compose
+      # actually recorded. The name split stays only as a fallback for a container
+      # compose did not start.
+      fallback_service = string(.label."com.docker.compose.service") ??
+        replace(name, r'-\d+$', "")
+
+      # When the daemon read the line, used only if the line does not carry its own
+      # timestamp. A process's own `ts` is when the event happened rather than when it
+      # was read, and under a burst those are not the same.
+      fallback_ts = format_timestamp!(.timestamp, "%Y-%m-%dT%H:%M:%S%z")
+
+      # Unpack any line that is a JSON object, rather than deciding by service which
+      # lines to try. The backend and the bot emit one per line under
+      # TIMOTHY_LOG_FORMAT=json, already redacted in-process, and merging it gives
+      # VictoriaLogs `level`, `logger`, `source`, any `extra` fields and the real `ts`.
+      #
+      # Asking the line what it is, instead of asking a lookup table what the line ought
+      # to be, is what keeps this from breaking quietly when a service is renamed or a
+      # new one is added. nginx and cloudflared emit plain text, so they simply fail the
+      # test and keep the whole line as their message.
+      #
+      # A non-JSON line from a JSON service is kept as its own message rather than
+      # dropped: uvicorn writes a few before `logs.configure` runs, and a hard crash can
+      # print a bare traceback. Those are the lines most worth having.
+      parsed, err = parse_json(.message)
+      if err == null && is_object(parsed) {
+        . = merge(., object!(parsed))
+      }
+
+      # After the merge, so a line that carried its own values keeps them — but the
+      # container name is the collector's observation, not the process's claim.
+      .container_name = name
+      if !exists(.service) { .service = fallback_service }
+      if !exists(.ts) { .ts = fallback_ts }
+
+      # Envelope fields that repeat the stream or say nothing. `stream` (stdout/stderr)
+      # stays: it is how an nginx error line is told from an access line.
+      del(.timestamp)
+      del(.label)
+      del(.image)
+      del(.host)
+      del(.source_type)
+      del(.container_id)
+      del(.container_created_at)
+
+  kept:
+    type: filter
+    inputs: [shaped]
+    # The compose healthcheck hits /health every 10s, which is ~3.1M uvicorn access
+    # lines a year and the largest single source in the store by a wide margin. Dropping
+    # it here is what makes a year of retention both cheap and readable.
+    #
+    # Deliberately narrow: only uvicorn's access logger, only the health path. An error
+    # *about* /health still arrives, because it is logged by something else.
+    #
+    # The collector's own lines go here too. `exclude_containers` above already skips
+    # them by name, but that match depends on the compose project being called `timothy`;
+    # this does not, and it is what actually breaks the loop — a line dropped here is a
+    # line not shipped, so there is nothing to log about shipping it.
+    condition: |
+      .service != "collector" &&
+        !(.logger == "uvicorn.access" && contains(to_string(.message) ?? "", "/health"))
+
+sinks:
+  victorialogs:
+    type: http
+    inputs: [kept]
+    uri: http://victorialogs:9428/insert/jsonline?_time_field=ts&_msg_field=message&_stream_fields=service,container_name
+    method: post
+    encoding:
+      codec: json
+    framing:
+      method: newline_delimited
+    request:
+      headers:
+        # Not optional and not cosmetic. Post the same body to /insert/jsonline with any
+        # other content type and VictoriaLogs answers 200 and stores nothing — no error
+        # in its log, no rejected count, just an empty store. Found by doing it.
+        Content-Type: application/stream+json
+    # Survives VictoriaLogs being down or restarted — Vector holds the backlog on disk
+    # and catches up. Bounded, not lossless: past 256MiB the oldest buffered events are
+    # dropped rather than blocking every container's stdout, which is the failure mode
+    # that keeps a log store from taking the stack down with it.
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: drop_newest
+    healthcheck:
+      enabled: false

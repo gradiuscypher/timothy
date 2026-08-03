@@ -1,5 +1,11 @@
 # Logs are redacted files in one shared directory
 
+> **Storage superseded by [ADR 0015](0015-logs-go-to-a-queryable-store-not-to-files.md).**
+> The files and their rotation machinery are being replaced by VictoriaLogs. The redaction
+> decisions below are *not* superseded — 0015 carries them forward unchanged, and the
+> reasoning for them lives here. Kept rather than rewritten: why files were tried, and
+> what it cost to bound them, is the argument 0015 rests on.
+
 Every service wrote to stdout and stopped there. That is the twelve-factor answer and it
 is the right default, but it assumes something is collecting stdout. Nothing here was.
 What actually held the logs was the Docker daemon's per-container JSON buffer, which is

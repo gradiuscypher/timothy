@@ -135,7 +135,9 @@ jobs:
       # cloudflared is left out: it needs a real tunnel token and has nothing to
       # front in CI. Everything behind it is exercised below.
       - name: Start backend, bot and web
-        run: docker compose up --build --wait --wait-timeout 180 backend bot web
+        run: |
+          docker compose up --build --wait --wait-timeout 180 \
+            backend bot web victorialogs collector
 
       - name: The SPA origin proxies /api to the backend
         run: |
@@ -320,6 +322,70 @@ jobs:
 
       - name: The backend runs unprivileged
         run: test "$(docker compose exec -T backend id -u | tr -d '\r')" != "0"
+
+      # ADR 0014's central promise, as an end-to-end assertion instead of a
+      # formatter-level one. Every seam between a log call and the store is exercised at
+      # once: the JSON on stdout, the daemon's socket, the collector's parse and its
+      # insert. A formatter test proves the redactor works; this proves the pipe that
+      # carries its output does not put the credential back — and it is the class of
+      # check that would have caught the logrotate chmod bug, where each piece was
+      # correct and the assembly was not.
+      #
+      # Queried from inside the network: nothing is published in CI, and the store's
+      # loopback binding is the whole access control (ADR 0015).
+      - name: A line reaches the log store, and its secret does not
+        run: |
+          docker compose exec -T backend python -c "
+          import json, urllib.request
+          body = json.dumps({
+              'level': 'error',
+              'message': 'ci-ingest-canary failed: token=ciCanarySecretA1b2C3d4E5',
+              'url': 'https://example.invalid/ci',
+              'kind': 'ci',
+          }).encode()
+          urllib.request.urlopen(urllib.request.Request(
+              'http://localhost:8000/client-logs', data=body, method='POST',
+              headers={'Content-Type': 'application/json',
+                       'Authorization': 'Bearer ci-placeholder',
+                       'X-Timothy-Actor': 'system'}))
+          "
+          # The collector batches, so poll rather than sleeping on a guess.
+          for _ in $(seq 1 30); do
+            docker compose exec -T backend python -c "
+          import urllib.parse, urllib.request
+          data = urllib.parse.urlencode({'query': 'ci-ingest-canary', 'limit': '20'}).encode()
+          print(urllib.request.urlopen(
+              'http://victorialogs:9428/select/logsql/query', data).read().decode())
+          " > hits.txt
+            grep -q ci-ingest-canary hits.txt && break
+            sleep 2
+          done
+          cat hits.txt
+          grep -q ci-ingest-canary hits.txt
+          # Shipped as fields, not as an opaque line: the collector parsed the JSON.
+          grep -q '"service":"backend"' hits.txt
+          grep -q '"logger":"timothy.web"' hits.txt
+          grep -q '"level":"ERROR"' hits.txt
+          # The point of the whole check.
+          ! grep -q ciCanarySecretA1b2C3d4E5 hits.txt
+          grep -q 'REDACTED' hits.txt
+
+      # The filter that makes a year of retention affordable. The healthcheck runs every
+      # 10s and would otherwise be ~3.1M lines a year and the largest source in the
+      # store. It has certainly run by now, so an empty result is the filter working
+      # rather than the check being early.
+      - name: Healthcheck access lines are dropped at the collector
+        run: |
+          docker compose exec -T backend python -c "
+          import urllib.parse, urllib.request
+          data = urllib.parse.urlencode({
+              'query': 'logger:=\"uvicorn.access\" AND _msg:\"/health\"', 'limit': '5',
+          }).encode()
+          body = urllib.request.urlopen(
+              'http://victorialogs:9428/select/logsql/query', data).read().decode()
+          print(repr(body))
+          raise SystemExit(1 if body.strip() else 0)
+          "
 
       # The seam the migration's own tests cannot reach: a database written by
       # `timothy-migrate` outside any container, served by the real backend image. If the
