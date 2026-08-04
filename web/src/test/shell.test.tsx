@@ -71,13 +71,15 @@ describe("the shell", () => {
   });
 
   it("offers it to whoever runs the deployment", async () => {
-    server.use(get("/auth/me", OWNER), get("/guilds", []));
+    server.use(get("/auth/me", OWNER), get("/guilds", []), get("/pools", []));
 
     renderApp();
 
     expect(await screen.findByRole("button", { name: /Operations/ })).toBeInTheDocument();
-    // Owning the deployment is not owning the pools, and the nav says so both ways.
-    expect(screen.queryByRole("link", { name: "Pools" })).not.toBeInTheDocument();
+    // Pools is readable by anyone signed in; owning the deployment does not add pool
+    // management, so the audit log — which does need it — stays off the nav.
+    expect(screen.getByRole("link", { name: "Pools" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Audit log" })).not.toBeInTheDocument();
   });
 
   it("keeps the queue under Operations rather than beside it", async () => {
@@ -108,14 +110,16 @@ describe("the shell", () => {
     expect(screen.queryByRole("group", { name: "Operations" })).not.toBeInTheDocument();
   });
 
-  it("hides them from somebody who does not", async () => {
+  it("hides editor-only screens from somebody who does not manage pools", async () => {
     // A courtesy, not a gate — every route behind these resolves the permission again.
-    server.use(get("/auth/me", MEMBER), get("/guilds", []));
+    // Pools itself stays on the nav: reading pools and listings only needs membership of
+    // the management guild, which signing in already established (ADR 0013).
+    server.use(get("/auth/me", MEMBER), get("/guilds", []), get("/pools", []));
 
     renderApp();
 
     await waitFor(() => expect(screen.getByText("member")).toBeInTheDocument());
-    expect(screen.queryByRole("link", { name: "Pools" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Pools" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Audit log" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Servers" })).toBeInTheDocument();
   });
@@ -172,13 +176,21 @@ describe("the shell", () => {
     expect(within(pools).getByRole("link", { name: "global" })).toBeInTheDocument();
   });
 
-  it("leaves the pools out of the rail for somebody who has none", async () => {
-    // `/pools` is 403 for a member, so a rail section for it would be a heading over an
-    // error. The page's own subscribe form still asks — that is its business, and it
-    // shows the refusal where the refusal matters.
+  it("shows the pools rail to a member who cannot edit them", async () => {
+    // Reading pools only needs membership of the management guild, which signing in
+    // already established (ADR 0013), so the rail names them for a plain member too —
+    // only the pages themselves withhold the editing controls.
     server.use(
       get("/auth/me", MEMBER),
-      get("/pools", { detail: "not a pool manager" }, 403),
+      get("/pools", [
+        {
+          id: 1,
+          name: "global",
+          description: null,
+          created_by: "system",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ]),
       get("/guilds", [
         {
           guild_id: GUILD,
@@ -202,6 +214,7 @@ describe("the shell", () => {
     renderApp(`/guilds/${GUILD}`);
 
     await screen.findByRole("navigation", { name: "Servers" });
-    expect(screen.queryByRole("navigation", { name: "Pools" })).not.toBeInTheDocument();
+    const pools = await screen.findByRole("navigation", { name: "Pools" });
+    expect(within(pools).getByRole("link", { name: "global" })).toBeInTheDocument();
   });
 });

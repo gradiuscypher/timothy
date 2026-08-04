@@ -10,6 +10,7 @@ import {
   useDeletePool,
   useListings,
   usePool,
+  useSignedIn,
   useUpdatePool,
 } from "@/api/hooks";
 import {
@@ -43,6 +44,8 @@ const PAGE_SIZE = 50;
  */
 export function PoolDetail({ name }: { name: string }) {
   const pool = usePool(name);
+  const session = useSignedIn();
+  const canManage = session.data?.manages_pools ?? false;
 
   if (pool.isPending) return <Loading what={name} />;
   if (pool.isError) return <ErrorNote error={pool.error} />;
@@ -55,16 +58,20 @@ export function PoolDetail({ name }: { name: string }) {
       ) : null}
 
       <div className="space-y-4">
-        <Listings name={name} />
-        <div className="grid gap-4 lg:grid-cols-2">
-          <BulkAdd name={name} />
-          <BulkRemove name={name} />
-        </div>
-        <PoolSettings
-          name={name}
-          description={pool.data.description}
-          currentName={pool.data.name}
-        />
+        <Listings name={name} canManage={canManage} />
+        {canManage ? (
+          <>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <BulkAdd name={name} />
+              <BulkRemove name={name} />
+            </div>
+            <PoolSettings
+              name={name}
+              description={pool.data.description}
+              currentName={pool.data.name}
+            />
+          </>
+        ) : null}
       </div>
     </>
   );
@@ -72,7 +79,7 @@ export function PoolDetail({ name }: { name: string }) {
 
 // -- the table -------------------------------------------------------------------------
 
-function Listings({ name }: { name: string }) {
+function Listings({ name, canManage }: { name: string; canManage: boolean }) {
   const [q, setQ] = useState("");
   const [cursors, setCursors] = useState<Array<number | null>>([null]);
   const page = cursors[cursors.length - 1] ?? null;
@@ -113,9 +120,11 @@ function Listings({ name }: { name: string }) {
         Listings
       </CardTitle>
 
-      <div className="mb-3">
-        <AddListing name={name} />
-      </div>
+      {canManage ? (
+        <div className="mb-3">
+          <AddListing name={name} />
+        </div>
+      ) : null}
 
       <ErrorNote error={listings.error ?? remove.error} />
       {listings.isPending ? <Loading what="listings" /> : null}
@@ -124,7 +133,7 @@ function Listings({ name }: { name: string }) {
       ) : null}
 
       {listings.data?.listings.length ? (
-        <Table head={["User", "Reason", "Added by", "Added", ""]}>
+        <Table head={["User", "Reason", "Added by", "Added", ...(canManage ? [""] : [])]}>
           {listings.data.listings.map((listing) => (
             <Row key={listing.id}>
               <Cell>
@@ -137,22 +146,24 @@ function Listings({ name }: { name: string }) {
               <Cell>
                 <When iso={listing.created_at} />
               </Cell>
-              <Cell className="text-right whitespace-nowrap">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setPending({ userId: listing.user_id, revert: false })}
-                >
-                  Remove
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setPending({ userId: listing.user_id, revert: true })}
-                >
-                  Remove &amp; unban
-                </Button>
-              </Cell>
+              {canManage ? (
+                <Cell className="text-right whitespace-nowrap">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setPending({ userId: listing.user_id, revert: false })}
+                  >
+                    Remove
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setPending({ userId: listing.user_id, revert: true })}
+                  >
+                    Remove &amp; unban
+                  </Button>
+                </Cell>
+              ) : null}
             </Row>
           ))}
         </Table>

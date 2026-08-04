@@ -389,7 +389,9 @@ function TopBar({ me, layout }: { me: SignedIn; layout: Layout }) {
 
   const links = [
     { to: "/", label: "Home", exact: true },
-    ...(me.manages_pools ? [{ to: "/pools", label: "Pools", exact: false }] : []),
+    // Pools is readable by anyone signed in (`READ_POOLS` is `ANY_GUILD_MEMBER`); only
+    // editing is restricted to pool managers, which the pages themselves enforce.
+    { to: "/pools", label: "Pools", exact: false },
     { to: "/guilds", label: "Servers", exact: false },
     { to: "/users", label: "Look up a user", exact: false },
     ...(me.manages_pools ? [{ to: "/audit", label: "Audit log", exact: false }] : []),

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { PoolDetail } from "@/routes/PoolDetail";
 
-import { apiUrl, get, mockApi, renderWithQuery, server } from "./harness";
+import { SIGNED_IN, apiUrl, get, mockApi, renderWithQuery, server } from "./harness";
 
 mockApi();
 
@@ -45,7 +45,7 @@ describe("the listing table", () => {
     const { handler } = listingsEndpoint({
       "|": { listings: [listing(1, "1000")], next_after_id: 1, total: 3076 },
     });
-    server.use(get("/pools/spam", POOL), handler);
+    server.use(get("/auth/me", SIGNED_IN), get("/pools/spam", POOL), handler);
 
     renderWithQuery(<PoolDetail name="spam" />);
 
@@ -58,7 +58,7 @@ describe("the listing table", () => {
     const { handler } = listingsEndpoint({
       "|": { listings: [listing(1, "1000")], next_after_id: null, total: 1 },
     });
-    server.use(get("/pools/spam", POOL), handler);
+    server.use(get("/auth/me", SIGNED_IN), get("/pools/spam", POOL), handler);
 
     renderWithQuery(<PoolDetail name="spam" />);
     await screen.findByText("1000");
@@ -78,7 +78,7 @@ describe("the listing table", () => {
       "|": { listings: [listing(1, "1000")], next_after_id: null, total: 1 },
       "evasion|": { listings: [listing(2, "2000")], next_after_id: null, total: 1 },
     });
-    server.use(get("/pools/spam", POOL), handler);
+    server.use(get("/auth/me", SIGNED_IN), get("/pools/spam", POOL), handler);
 
     const { user } = renderWithQuery(<PoolDetail name="spam" />);
     await screen.findByText("1000");
@@ -94,7 +94,7 @@ describe("the listing table", () => {
       "|": { listings: [listing(1, "1000")], next_after_id: 1, total: 2 },
       "|1": { listings: [listing(2, "2000")], next_after_id: null, total: 2 },
     });
-    server.use(get("/pools/spam", POOL), handler);
+    server.use(get("/auth/me", SIGNED_IN), get("/pools/spam", POOL), handler);
 
     const { user } = renderWithQuery(<PoolDetail name="spam" />);
     await screen.findByText("1000");
@@ -113,7 +113,7 @@ describe("the listing table", () => {
       "|1": { listings: [listing(2, "2000")], next_after_id: null, total: 2 },
       "raid|": { listings: [], next_after_id: null, total: 0 },
     });
-    server.use(get("/pools/spam", POOL), handler);
+    server.use(get("/auth/me", SIGNED_IN), get("/pools/spam", POOL), handler);
 
     const { user } = renderWithQuery(<PoolDetail name="spam" />);
     await screen.findByText("1000");
@@ -130,7 +130,7 @@ describe("the listing table", () => {
     const { handler } = listingsEndpoint({
       "|": { listings: [listing(1, "1000")], next_after_id: null, total: 1 },
     });
-    server.use(get("/pools/spam", POOL), handler);
+    server.use(get("/auth/me", SIGNED_IN), get("/pools/spam", POOL), handler);
 
     const { user } = renderWithQuery(<PoolDetail name="spam" />);
     await screen.findByText("1000");
@@ -146,7 +146,7 @@ describe("removing a listing", () => {
     const { handler } = listingsEndpoint({
       "|": { listings: [listing(1, "1000")], next_after_id: null, total: 1 },
     });
-    server.use(get("/pools/spam", POOL), handler);
+    server.use(get("/auth/me", SIGNED_IN), get("/pools/spam", POOL), handler);
     const rendered = renderWithQuery(<PoolDetail name="spam" />);
     await screen.findByText("1000");
     return rendered;
@@ -208,7 +208,7 @@ describe("bulk listing", () => {
     const { handler } = listingsEndpoint({
       "|": { listings: [], next_after_id: null, total: 0 },
     });
-    server.use(get("/pools/spam", POOL), handler);
+    server.use(get("/auth/me", SIGNED_IN), get("/pools/spam", POOL), handler);
     const rendered = renderWithQuery(<PoolDetail name="spam" />);
     await screen.findByText(/Nobody is listed/);
     return rendered;

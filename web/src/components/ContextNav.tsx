@@ -1,6 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 
-import { useMyGuilds, usePools, useSignedIn } from "@/api/hooks";
+import { useMyGuilds, usePools } from "@/api/hooks";
 import { cn } from "@/components/cn";
 import type { ReactNode } from "react";
 
@@ -23,16 +23,14 @@ import type { ReactNode } from "react";
  * own errors.
  */
 export function ContextNav() {
-  const session = useSignedIn();
-
   return (
     <aside className="hidden w-56 shrink-0 rail:block">
       {/* Sticky so it survives a long listing table, and scrollable in itself because a
           hundred-odd servers is longer than any viewport. */}
       <div className="sticky top-6 max-h-[calc(100vh-5rem)] space-y-5 overflow-y-auto">
-        {/* `/pools` is 403 for anybody who does not manage pools, so the section that
-            asks for it is not rendered rather than rendered empty. */}
-        {session.data?.manages_pools ? <PoolRail /> : null}
+        {/* `/pools` is readable by anyone signed in — only editing needs the pool
+            manager role — so the rail shows it to everyone too. */}
+        <PoolRail />
         <GuildRail />
       </div>
     </aside>
