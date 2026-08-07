@@ -16,6 +16,7 @@ import logging
 
 import discord
 from discord import app_commands
+from discord.ext import tasks
 
 from timothy_bot import commands, embeds, relay
 from timothy_bot.api import Api
@@ -24,6 +25,16 @@ from timothy_bot.settings import Settings
 log = logging.getLogger(__name__)
 
 UNEXPECTED = "Something went wrong"
+
+RECONCILE_INTERVAL_HOURS = 6
+"""How often guilds are re-announced independent of a reconnect.
+
+`on_ready` already re-announces everything Timothy is in, but a stable gateway session
+can go a long time without one — long enough for a guild whose registration failed
+(the backend briefly unreachable, a token mismatch) to sit stuck on whatever it last
+had, which for a guild registered for the first time is no name at all. This is the same
+idempotent announcement `on_ready` already makes, run on a timer as well, so that kind of
+drift corrects itself rather than waiting on an incidental reconnect."""
 
 
 def intents() -> discord.Intents:
@@ -131,6 +142,19 @@ class TimothyBot(discord.Client):
         log.info("connected as %s in %d guilds", self.user, len(self.guilds))
         if not self.intents.members:  # pragma: no cover — set in `intents()`
             log.warning("the members intent is off: joins will not be enforced at the door")
+        await relay.announce_guilds(self.api, [(guild.id, guild.name) for guild in self.guilds])
+        if not self._reconcile_guilds.is_running():
+            self._reconcile_guilds.start()
+
+    @tasks.loop(hours=RECONCILE_INTERVAL_HOURS)
+    async def _reconcile_guilds(self) -> None:
+        """The same announcement `on_ready` makes, run again on a timer.
+
+        Started once from `on_ready` and left running across reconnects — `on_ready`
+        already re-announces on every reconnect, so this only has work to do on the
+        connections between them, correcting whatever `guild_joined` or `guild_renamed`
+        failed to relay in the meantime.
+        """
         await relay.announce_guilds(self.api, [(guild.id, guild.name) for guild in self.guilds])
 
     async def on_guild_join(self, guild: discord.Guild) -> None:

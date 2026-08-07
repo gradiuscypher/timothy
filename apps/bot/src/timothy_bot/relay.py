@@ -49,7 +49,10 @@ async def guild_joined(api: Api, guild_id: int, name: str | None = None) -> None
     try:
         await api.register_guild(guild_id, name=name)
     except ApiError as error:
-        log.warning("guild %s not registered: %s", guild_id, error.detail)
+        # Louder than the other relays: a failure here is not just a missed event to be
+        # caught by the sweep, it silently degrades what the UI shows for that guild
+        # (Snowflake instead of a name) until the next reconnect or reconciliation pass.
+        log.exception("guild %s not registered: %s", guild_id, error.detail)
         return
     log.info("guild %s registered", guild_id)
 
@@ -64,7 +67,7 @@ async def guild_renamed(api: Api, guild_id: int, name: str) -> None:
     try:
         await api.register_guild(guild_id, name=name)
     except ApiError as error:
-        log.warning("guild %s rename not relayed: %s", guild_id, error.detail)
+        log.exception("guild %s rename not relayed: %s", guild_id, error.detail)
         return
     log.info("guild %s renamed to %s", guild_id, name)
 
