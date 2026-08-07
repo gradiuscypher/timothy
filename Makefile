@@ -18,8 +18,15 @@ SERVICE ?= backend
 # `docker compose logs` prefixes every line with the service name, which is not JSON and
 # stops `jq` at column 10. `--no-log-prefix` is the fix; `fromjson? // empty` skips any
 # line that is not JSON at all rather than aborting the pipe on the first one.
+#
+# `JQ` and `LINE` are deliberately *not* a ready-made filter. jq takes exactly one filter
+# argument, so a variable holding a quoted one and a recipe adding another quoted one hand
+# it two — which is what the first version of this file did. Each recipe below therefore
+# builds a single filter, on a single line, and every one of them is exercised by
+# `make selftest`.
 LOGS := $(COMPOSE) logs --no-log-prefix
-JSONL := jq -R -r 'fromjson? // empty'
+JQ := jq -R -r
+LINE := fromjson? // empty
 
 # How many log lines to look back over. `make errors N=2000`.
 N ?= 500
@@ -77,7 +84,7 @@ dev: ## Serve the SPA, proxying /api to localhost:8000
 # -- everything --------------------------------------------------------------
 
 .PHONY: check
-check: fmt lint test web-lint web-test api-clean ## Everything CI would run
+check: fmt lint test web-lint web-test api-clean selftest ## Everything CI would run
 
 # `schema.d.ts` is generated and committed so the contract is reviewable, which only holds
 # if a drifted copy is a failure rather than a surprise at the next `npm run api`.
@@ -104,6 +111,12 @@ restart: ## Restart one service — SERVICE=backend by default
 ps: ## What is running
 	$(COMPOSE) ps
 
+# Reads compose.yaml rather than the daemon, so it answers the same whether or not the
+# stack is up — which is what you want when the question is "what do I pass to SERVICE=".
+.PHONY: services
+services: ## The service names, for SERVICE=
+	@$(COMPOSE) config --services | sort
+
 # -- logs --------------------------------------------------------------------
 #
 # For anything older than the daemon's buffer, or any question with a *shape* to it, the
@@ -113,32 +126,26 @@ ps: ## What is running
 
 .PHONY: logs
 logs: ## Follow one service's logs as plain messages
-	$(LOGS) -f $(SERVICE) | $(JSONL) '"\(.ts) \(.level) \(.message)"'
+	$(LOGS) -f $(SERVICE) | $(JQ) '$(LINE) | "\(.ts) \(.level) \(.message)"'
 
 .PHONY: errors
 errors: ## The last N warnings and errors, with any traceback
-	$(LOGS) --tail $(N) $(SERVICE) \
-		| $(JSONL) 'select(.level == "ERROR" or .level == "WARNING")
-			| "\(.ts) \(.level) \(.message)\(if .exception then "\n\(.exception)" else "" end)"'
+	$(LOGS) --tail $(N) $(SERVICE) | $(JQ) '$(LINE) | select(.level == "ERROR" or .level == "WARNING") | "\(.ts) \(.level) \(.message)" + (if .exception then "\n" + .exception else "" end)'
 
 .PHONY: jobs-log
 jobs-log: ## Every job start and finish, as a timeline
-	$(LOGS) --tail $(N) backend \
-		| $(JSONL) 'select(.extra.job_id)
-			| "\(.ts) job \(.extra.job_id) \(.extra.job_kind) \(if .extra.seconds then "finished in \(.extra.seconds)s" else "started" end)"'
+	$(LOGS) --tail $(N) backend | $(JQ) '$(LINE) | select(.extra.job_id) | "\(.ts) job \(.extra.job_id) \(.extra.job_kind) " + (if .extra.seconds then "finished in \(.extra.seconds)s" else "started" end)'
 
 # One job runs at a time, so a `started` with nothing after it is what the queue is on.
 # That is the question `run_after` timestamps cannot answer: a sweep of a large guild
 # legitimately takes half an hour and looks identical to a wedge until it ends.
 .PHONY: jobs-now
 jobs-now: ## What the worker is on right now
-	@$(LOGS) --tail $(N) backend \
-		| $(JSONL) 'select(.extra.job_id) | "\(.ts) \(.message)"' \
-		| tail -5
+	@$(LOGS) --tail $(N) backend | $(JQ) '$(LINE) | select(.extra.job_id) | "\(.ts) \(.message)"' | tail -5
 
 .PHONY: names-log
 names-log: ## Follow the user-name backfill
-	$(LOGS) -f backend | $(JSONL) 'select(.message | test("backfill")) | .message'
+	$(LOGS) -f backend | $(JQ) '$(LINE) | select(.message | test("backfill")) | .message'
 
 # -- the queue ---------------------------------------------------------------
 
@@ -170,3 +177,18 @@ owed = db.execute('SELECT COUNT(*) FROM (SELECT user_id FROM listings UNION \
 print('named:  ', named); \
 print('no such account:', missing); \
 print('never looked up:', owed)"
+
+# -- proving the recipes work ------------------------------------------------
+
+# The log recipes are shell pipelines built from make variables, and the first version of
+# this file shipped one that could not parse: the filters were tested by hand in bash and
+# never through `make`, where the quoting is what breaks. This runs each of them for real
+# — through make, through the same variables — against a fixture of the lines the backend
+# actually writes, with `docker` replaced by a stub that prints it.
+#
+# Cheap enough to leave in `check`. It needs `jq` and nothing else.
+SELFTEST := $(CURDIR)/scripts/selftest-logs.sh
+
+.PHONY: selftest
+selftest: ## Run the log recipes against a fixture, through make
+	@$(SELFTEST)
