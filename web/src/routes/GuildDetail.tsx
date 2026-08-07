@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import type { OutcomeStatus, SubscriptionLevel } from "@/api/client";
 import {
+  useBanFailureDiagnosis,
+  useBanFailures,
   useClearNotificationChannel,
   useCreateException,
   useDeleteException,
@@ -9,15 +11,18 @@ import {
   useEnforcement,
   useExceptions,
   useGuild,
+  useGuildDiagnostics,
   useNotificationChannel,
   usePauseEnforcement,
   usePools,
+  useRefreshDiagnostics,
   useSetNotificationChannel,
   useSetSubscription,
   useSubscriptions,
 } from "@/api/hooks";
 import {
   Badge,
+  Banner,
   Button,
   Card,
   CardTitle,
@@ -62,11 +67,13 @@ export function GuildDetail({ guildId }: { guildId: string }) {
       </PageTitle>
 
       {guild.data.enforcement_paused ? (
-        <p className="mb-4 rounded-md bg-warn/10 px-3 py-2 text-sm text-warn" role="status">
+        <Banner className="mb-4">
           Enforcement is paused here. Timothy is recording nothing and issuing nothing in
           this server. Resuming queues a catch-up over everything missed.
-        </p>
+        </Banner>
       ) : null}
+
+      <BanReadiness guildId={guildId} />
 
       <div className="space-y-4">
         <Subscriptions guildId={guildId} />
@@ -74,6 +81,8 @@ export function GuildDetail({ guildId }: { guildId: string }) {
           <Exceptions guildId={guildId} />
           <NotificationChannel guildId={guildId} />
         </div>
+        <UnbannableRoles guildId={guildId} />
+        <BanFailures guildId={guildId} />
         <History guildId={guildId} />
       </div>
     </>
@@ -97,6 +106,284 @@ function PauseSwitch({ guildId, paused }: { guildId: string; paused: boolean }) 
       >
         {paused ? "Resume enforcement" : "Pause enforcement"}
       </Button>
+    </div>
+  );
+}
+
+// -- can Timothy ban here at all -------------------------------------------------------
+
+/**
+ * The one thing on this page that means nothing else on it works.
+ *
+ * Three states, and the third is the one worth being careful about. Timothy can ban;
+ * Timothy cannot ban; and *nobody has looked* — a server the bot has never reported on
+ * (ADR 0016). The last must not render as the first: an all-clear nobody measured is the
+ * only answer here worse than no answer.
+ */
+function BanReadiness({ guildId }: { guildId: string }) {
+  const diagnostics = useGuildDiagnostics(guildId);
+  if (diagnostics.isPending || diagnostics.isError) return null;
+
+  if (diagnostics.data === null) {
+    return (
+      <Banner className="mb-4">
+        Timothy has not checked this server's setup yet. It does that within a few minutes
+        of connecting, so this usually clears itself — until it does, nothing below says
+        whether Timothy can actually ban here.
+      </Banner>
+    );
+  }
+
+  if (!diagnostics.data.can_ban) {
+    return (
+      <Banner tone="danger" role="alert" className="mb-4">
+        <strong>Timothy cannot ban anyone in this server.</strong> It has not been granted
+        the Ban Members permission, so every ban-level subscription below will fail until
+        an administrator grants it in Server Settings → Roles.
+      </Banner>
+    );
+  }
+
+  if (diagnostics.data.stale) {
+    return (
+      <Banner className="mb-4">
+        Timothy last checked this server's setup <When iso={diagnostics.data.observed_at} />.
+        Anything changed in Discord since then may not be reflected below.
+      </Banner>
+    );
+  }
+
+  return null;
+}
+
+// -- roles out of reach ----------------------------------------------------------------
+
+/**
+ * The roles Timothy can never ban anybody out of.
+ *
+ * A role at *exactly* Timothy's own position counts, which is the whole reason this
+ * exists as a list rather than as a number to compare: Discord's own settings screen
+ * shows the two level with each other and gives no hint that level means out of reach.
+ */
+function UnbannableRoles({ guildId }: { guildId: string }) {
+  const diagnostics = useGuildDiagnostics(guildId);
+  const refresh = useRefreshDiagnostics(guildId);
+  const notify = useToast();
+
+  const data = diagnostics.data ?? null;
+  const managed = data?.unbannable_roles.filter((role) => role.managed) ?? [];
+  const ordinary = data?.unbannable_roles.filter((role) => !role.managed) ?? [];
+
+  return (
+    <Card label="Roles Timothy cannot ban">
+      <CardTitle
+        action={
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={refresh.isPending}
+            onClick={() =>
+              refresh.mutate(undefined, {
+                onSuccess: () =>
+                  notify("Re-check requested. Timothy will look again shortly."),
+              })
+            }
+          >
+            Check again
+          </Button>
+        }
+      >
+        Roles Timothy cannot ban
+      </CardTitle>
+      <p className="mb-3 text-sm text-surface-muted">
+        Discord will not let Timothy ban anyone whose highest role sits <strong>at or
+        above</strong> its own. Level with counts — that is the one people miss. Move
+        Timothy's role higher in Server Settings → Roles to shrink this list.
+      </p>
+
+      <ErrorNote error={diagnostics.error ?? refresh.error} />
+      {diagnostics.isPending ? <Loading what="this server's roles" /> : null}
+      {data === null && !diagnostics.isPending ? (
+        <Empty>Timothy has not checked this server yet.</Empty>
+      ) : null}
+
+      {data?.unbannable_roles.length === 0 ? (
+        <Empty>
+          Timothy outranks every role here. Nobody is out of reach on role position alone.
+        </Empty>
+      ) : null}
+
+      {data?.unbannable_roles.length ? (
+        <>
+          <Table head={["Role", "Position", "Members"]}>
+            {[...ordinary, ...managed].map((role) => (
+              <Row key={role.role_id}>
+                <Cell className="font-medium">
+                  {role.name}
+                  {role.managed ? (
+                    <>
+                      {" "}
+                      <Badge>managed by Discord</Badge>
+                    </>
+                  ) : null}
+                </Cell>
+                <Cell className="text-surface-muted">{role.position}</Cell>
+                <Cell className="text-surface-muted">
+                  {role.member_count ?? "—"}
+                </Cell>
+              </Row>
+            ))}
+          </Table>
+          <p className="mt-3 text-xs text-surface-muted">
+            {data.unbannable_members === null ? (
+              <>
+                Timothy could not count who holds these roles, so the numbers above are
+                left blank rather than shown as zero.
+              </>
+            ) : (
+              <>
+                Up to {data.unbannable_members} people are out of reach. "Up to", because
+                anyone holding more than one of these roles is counted once per role.
+              </>
+            )}{" "}
+            Timothy's own highest role is{" "}
+            <strong>{data.top_role_name ?? "unnamed"}</strong> at position{" "}
+            {data.top_role_position}. Checked <When iso={data.observed_at} />.
+            {managed.length ? (
+              <>
+                {" "}
+                Roles marked <em>managed by Discord</em> belong to an integration and
+                cannot be taken off anyone by hand — raising Timothy is the only fix for
+                those.
+              </>
+            ) : null}
+          </p>
+        </>
+      ) : null}
+    </Card>
+  );
+}
+
+// -- bans that failed ------------------------------------------------------------------
+
+const BLOCKER_COPY = {
+  no_ban_permission:
+    "Timothy has not been granted the Ban Members permission in this server.",
+  guild_owner: "This person owns the server. Nothing Discord offers can ban them.",
+  outranked: "This person holds a role at or above Timothy's own.",
+  left_guild:
+    "This person is not in the server now. Timothy bans them at the door if they return.",
+  unknown: "Timothy could not work out why. Discord's own words are below.",
+} as const;
+
+/**
+ * Every ban Timothy tried here and could not issue, each one explainable.
+ *
+ * The list is free — it is the `failed` outcomes read back. The explanation is not: it
+ * costs a live Discord lookup, so it is fetched when somebody opens a row, and it
+ * describes the world *now* rather than when the ban failed. That is deliberate: a person
+ * reading this is about to go and move a role, and wants to know whether it would work
+ * today.
+ */
+function BanFailures({ guildId }: { guildId: string }) {
+  const failures = useBanFailures(guildId);
+  const [open, setOpen] = useState<string | null>(null);
+
+  return (
+    <Card label="Failed bans">
+      <CardTitle>Failed bans</CardTitle>
+      <p className="mb-3 text-sm text-surface-muted">
+        Bans Timothy was asked to issue here and could not. Open one to see why, checked
+        against Discord as things stand right now.
+      </p>
+
+      <ErrorNote error={failures.error} />
+      {failures.isPending ? <Loading what="failed bans" /> : null}
+      {failures.data?.length === 0 ? (
+        <Empty>Nothing Timothy tried to ban here has failed.</Empty>
+      ) : null}
+
+      {failures.data?.length ? (
+        <Table head={["User", "Pool", "What Discord said", "When", ""]}>
+          {failures.data.map((failure) => (
+            <Fragment key={`${failure.user_id}-${failure.pool_id}`}>
+              <Row>
+                <Cell>
+                  <Snowflake id={failure.user_id} />
+                </Cell>
+                <Cell>{failure.pool_name ?? <em>deleted pool</em>}</Cell>
+                <Cell className="text-surface-muted">{failure.reason ?? "—"}</Cell>
+                <Cell>
+                  <When iso={failure.attempted_at} />
+                </Cell>
+                <Cell className="text-right">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-expanded={open === failure.user_id}
+                    onClick={() =>
+                      setOpen(open === failure.user_id ? null : failure.user_id)
+                    }
+                  >
+                    {open === failure.user_id ? "Hide" : "Why?"}
+                  </Button>
+                </Cell>
+              </Row>
+              {open === failure.user_id ? (
+                <Row>
+                  <Cell colSpan={5}>
+                    <Diagnosis guildId={guildId} userId={failure.user_id} />
+                  </Cell>
+                </Row>
+              ) : null}
+            </Fragment>
+          ))}
+        </Table>
+      ) : null}
+    </Card>
+  );
+}
+
+function Diagnosis({ guildId, userId }: { guildId: string; userId: string }) {
+  const diagnosis = useBanFailureDiagnosis(guildId, userId);
+
+  if (diagnosis.isPending) return <Loading what="the reason" />;
+  if (diagnosis.isError) return <ErrorNote error={diagnosis.error} />;
+
+  const { blocker, blocking_roles, timothy_top_role_name, timothy_top_role_position } =
+    diagnosis.data;
+
+  return (
+    <div className="space-y-2 py-2">
+      <p className="text-sm">
+        <Badge tone={blocker === "left_guild" ? "neutral" : "ban"}>
+          {blocker.replaceAll("_", " ")}
+        </Badge>{" "}
+        {BLOCKER_COPY[blocker]}
+      </p>
+
+      {blocking_roles.length ? (
+        <p className="text-sm text-surface-muted">
+          In the way:{" "}
+          {blocking_roles.map((role, index) => (
+            <Fragment key={role.role_id}>
+              {index ? ", " : ""}
+              <strong>{role.name}</strong> (position {role.position})
+            </Fragment>
+          ))}
+          . Timothy sits at position {timothy_top_role_position} as{" "}
+          <strong>{timothy_top_role_name ?? "an unnamed role"}</strong>. Move Timothy's
+          role above{" "}
+          {blocking_roles.length === 1 ? "that one" : "all of those"}, or take{" "}
+          {blocking_roles.length === 1 ? "it" : "them"} off this person.
+        </p>
+      ) : null}
+
+      {diagnosis.data.detail ? (
+        <p className="text-xs text-surface-muted">
+          Discord said: <span className="font-mono">{diagnosis.data.detail}</span>
+        </p>
+      ) : null}
     </div>
   );
 }

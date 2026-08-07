@@ -8,6 +8,7 @@ import type { ReactElement } from "react";
 import { afterAll, afterEach, beforeAll } from "vitest";
 
 import { ApiError } from "@/api/client";
+import { ToastProvider } from "@/components/Toast";
 import { makeRouter } from "@/router";
 
 /**
@@ -74,7 +75,13 @@ export const OWNER = {
   is_owner: true,
 };
 
-/** Render a component with a query cache that neither retries nor caches across tests. */
+/**
+ * Render a component with a query cache that neither retries nor caches across tests.
+ *
+ * The providers are the ones `main.tsx` puts above the router, and they have to be: a
+ * screen that confirms a save with `useToast` throws outright without one, so a harness
+ * missing a provider does not fail the assertion, it fails the render.
+ */
 export function renderWithQuery(element: ReactElement): RenderResult & {
   user: ReturnType<typeof userEvent.setup>;
 } {
@@ -86,7 +93,11 @@ export function renderWithQuery(element: ReactElement): RenderResult & {
   });
   return {
     user: userEvent.setup(),
-    ...render(<QueryClientProvider client={client}>{element}</QueryClientProvider>),
+    ...render(
+      <QueryClientProvider client={client}>
+        <ToastProvider>{element}</ToastProvider>
+      </QueryClientProvider>,
+    ),
   };
 }
 

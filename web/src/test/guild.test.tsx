@@ -34,6 +34,8 @@ function guildScreen(overrides: Partial<Record<string, unknown>> = {}) {
     get(`/guilds/${GUILD}/exceptions`, (overrides.exceptions ?? []) as never),
     get(`/guilds/${GUILD}/notification-channel`, { detail: "no such channel" }, 404),
     get(`/guilds/${GUILD}/enforcement`, (overrides.enforcement ?? []) as never),
+    get(`/guilds/${GUILD}/diagnostics`, { detail: "not reported" }, 404),
+    get(`/guilds/${GUILD}/diagnostics/failures`, []),
     get("/pools", (overrides.pools ?? []) as never),
   );
   return renderWithQuery(<GuildDetail guildId={GUILD} />);

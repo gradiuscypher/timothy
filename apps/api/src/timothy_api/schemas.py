@@ -23,12 +23,14 @@ from timothy_core.db.models import (
     EnforcementOutcome,
     Guild,
     GuildException,
+    GuildRole,
     Job,
     Listing,
     NotificationChannel,
     Pool,
     Subscription,
 )
+from timothy_core.enforcement.diagnosis import BanBlocker
 from timothy_core.enums import JobStatus, OutcomeStatus, SubscriptionLevel
 
 SNOWFLAKE_PATTERN = r"^\d{1,20}$"
@@ -47,6 +49,11 @@ every audit row and every job the request creates. A thousand characters is far 
 MAX_DESCRIPTION = 1000
 """How much prose a pool may carry. Never reaches Discord; bounded so that a field the UI
 renders cannot be made arbitrarily large."""
+
+MAX_ROLES = 500
+"""How many roles one diagnostics report may carry. Discord's own ceiling is 250, so this
+is headroom rather than a limit anybody meets — it is here so a malformed report cannot
+ask the backend to write an unbounded number of rows in one transaction."""
 
 
 def _to_snowflake(value: object) -> object:
@@ -357,6 +364,139 @@ class EnforcementOutcomeRead(BaseModel):
                 "attempted_at": outcome.attempted_at,
             }
         )
+
+
+class RoleRead(BaseModel):
+    """One of a guild's roles, as the gateway last saw it (ADR 0016)."""
+
+    role_id: Snowflake
+    name: str
+    position: int
+    member_count: int | None
+    """How many people hold it, or `None` when the bot could not count. Never zero as a
+    stand-in for "we don't know" — see :class:`~timothy_core.db.models.GuildRole`."""
+
+    managed: bool
+
+    @classmethod
+    def of(cls, role: GuildRole) -> Self:
+        """Render a stored role."""
+        return cls.model_validate(
+            {
+                "role_id": role.role_id,
+                "name": role.name,
+                "position": role.position,
+                "member_count": role.member_count,
+                "managed": role.managed,
+            }
+        )
+
+
+class RoleReport(BaseModel):
+    """One role, as the bot reports it. The write side of :class:`RoleRead`."""
+
+    role_id: Snowflake
+    name: str = Field(max_length=100)
+    position: int
+    member_count: int | None = Field(default=None, ge=0)
+    managed: bool = False
+
+
+class DiagnosticsReport(BaseModel):
+    """What the bot saw of one guild, read out of the gateway's own cache.
+
+    Every field is a fact about Discord that Timothy only observes. Nothing here is a
+    decision, which is why the whole payload can be replaced on every round without
+    anybody losing anything they set.
+    """
+
+    can_ban: bool
+    is_administrator: bool
+    top_role_position: int = Field(ge=0)
+    top_role_name: str | None = Field(default=None, max_length=100)
+    owner_id: Snowflake
+    member_counts_complete: bool = True
+    roles: list[RoleReport] = Field(default_factory=list, max_length=MAX_ROLES)
+
+
+class GuildDiagnosticsRead(BaseModel):
+    """Whether Timothy can do its job in one guild, and what it cannot reach.
+
+    A guild the bot has never reported on answers 404 rather than a row of defaults. An
+    all-clear nobody measured is the one answer worse than no answer, and there is no
+    honest value for `can_ban` to take when nothing has looked.
+    """
+
+    guild_id: Snowflake
+    observed_at: datetime
+    stale: bool
+    """Whether the snapshot is older than twice the reporting interval — the bot is down,
+    or cannot reach the backend."""
+
+    can_ban: bool
+    is_administrator: bool
+    top_role_position: int
+    top_role_name: str | None
+    member_counts_complete: bool
+    unbannable_roles: list[RoleRead]
+    """Roles at or above Timothy's own, highest first. Nobody holding one can ever be
+    banned here, whatever any pool says."""
+
+    unbannable_members: int | None
+    """People in reach of no ban, summed over the roles above — `None` when any count is
+    missing. Double-counts anyone holding more than one such role, which is why the UI
+    says "up to"."""
+
+
+class BanFailureRead(BaseModel):
+    """One ban Timothy tried to issue here and could not."""
+
+    user_id: Snowflake
+    pool_id: int
+    pool_name: str | None
+    """`None` for a pool that has since been deleted; the failure outlives it, because
+    `enforcement_outcomes` holds no foreign keys."""
+
+    reason: str | None
+    attempted_at: datetime
+
+
+class BanFailureDiagnosis(BaseModel):
+    """Why one ban failed, resolved against Discord now rather than when it failed.
+
+    Live on purpose. Somebody reading this is about to go and change a role, and the
+    question they are really asking is "would it work today" — an explanation frozen at
+    the moment of failure would keep naming a conflict they had already fixed.
+    """
+
+    user_id: Snowflake
+    blocker: BanBlocker
+    blocking_roles: list[RoleRead]
+    """The target's own roles at or above Timothy's, highest first. The list of things to
+    move. Empty unless `blocker` is `outranked`."""
+
+    timothy_top_role_position: int
+    timothy_top_role_name: str | None
+    detail: str | None
+    """What Discord said when it refused, carried through untouched."""
+
+
+class DiagnosticsRefreshAck(BaseModel):
+    """A one-off refresh has been asked for.
+
+    Asked for, not done: the backend cannot reach the bot, so this records the request
+    and the bot picks it up on its next poll (ADR 0016). The caller polls the snapshot to
+    see it land.
+    """
+
+    guild_id: Snowflake
+    requested: bool
+
+
+class PendingDiagnostics(BaseModel):
+    """The guilds someone has asked the bot to re-check. Draining, so reading is taking."""
+
+    guild_ids: list[Snowflake]
 
 
 class InventoryCounts(BaseModel):

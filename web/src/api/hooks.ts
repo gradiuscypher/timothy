@@ -11,8 +11,11 @@ import {
   ApiError,
   unwrap,
   type AuditEntry,
+  type BanFailure,
+  type BanFailureDiagnosis,
   type BulkResult,
   type Guild,
+  type GuildDiagnostics,
   type GuildException,
   type Listing,
   type ListingPage,
@@ -52,6 +55,10 @@ export const keys = {
   exceptions: (id: string) => ["guilds", id, "exceptions"] as const,
   channel: (id: string) => ["guilds", id, "notification-channel"] as const,
   enforcement: (id: string, status: string) => ["guilds", id, "enforcement", status] as const,
+  diagnostics: (id: string) => ["guilds", id, "diagnostics"] as const,
+  banFailures: (id: string) => ["guilds", id, "diagnostics", "failures"] as const,
+  banFailure: (id: string, userId: string) =>
+    ["guilds", id, "diagnostics", "failures", userId] as const,
   auditLog: (action: string, q: string) => ["audit-log", action, q] as const,
   opsOverview: (days: number) => ["ops", "overview", days] as const,
   opsActivity: (days: number) => ["ops", "activity", days] as const,
@@ -443,6 +450,98 @@ export function useEnforcement(
             path: { guild_id: guildId },
             query: status ? { status } : {},
           },
+        }),
+      ),
+  });
+}
+
+// -- can Timothy do its job here -------------------------------------------------------
+
+/**
+ * How long a page waits to notice a snapshot the bot has just pushed.
+ *
+ * The refresh button cannot reach the bot — it records a request the bot collects on its
+ * own poll (ADR 0016) — so there is nothing to await and the only way to see the answer
+ * arrive is to keep asking. Fifteen seconds is under the bot's own poll interval, so the
+ * new snapshot appears within a tick of landing, and each ask is one indexed row.
+ */
+const DIAGNOSTICS_REFRESH_MS = 15_000;
+
+/**
+ * Whether Timothy can ban in this guild, and what it can never reach.
+ *
+ * `null` when the bot has never reported — a 404 is the answer, as it is for the
+ * notification channel. Deliberately not defaulted to an all-clear: a guild nothing has
+ * looked at is not a guild where everything is fine, and the two must not render alike.
+ */
+export function useGuildDiagnostics(
+  guildId: string,
+): UseQueryResult<GuildDiagnostics | null> {
+  return useQuery({
+    queryKey: keys.diagnostics(guildId),
+    refetchInterval: DIAGNOSTICS_REFRESH_MS,
+    queryFn: async () => {
+      try {
+        return unwrap(
+          await api.GET("/guilds/{guild_id}/diagnostics", {
+            params: { path: { guild_id: guildId } },
+          }),
+        );
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+  });
+}
+
+/**
+ * Ask for this guild to be looked at again, out of turn.
+ *
+ * Nothing to invalidate on success: the backend has only *recorded* the request, and the
+ * snapshot changes when the bot gets round to it. The poll above is what shows the answer.
+ */
+export function useRefreshDiagnostics(
+  guildId: string,
+): UseMutationResult<void, Error, void> {
+  return useMutation({
+    mutationFn: async () => {
+      await api.POST("/guilds/{guild_id}/diagnostics/refresh", {
+        params: { path: { guild_id: guildId } },
+      });
+    },
+  });
+}
+
+export function useBanFailures(guildId: string): UseQueryResult<BanFailure[]> {
+  return useQuery({
+    queryKey: keys.banFailures(guildId),
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/guilds/{guild_id}/diagnostics/failures", {
+          params: { path: { guild_id: guildId } },
+        }),
+      ),
+  });
+}
+
+/**
+ * Why one ban failed, resolved against Discord now.
+ *
+ * This is the only call on the guild screen that costs a Discord lookup, so it is gated
+ * by where it is used rather than by an `enabled` flag: the component that calls it is
+ * mounted when somebody opens a row and unmounted when they close it.
+ */
+export function useBanFailureDiagnosis(
+  guildId: string,
+  userId: string,
+): UseQueryResult<BanFailureDiagnosis> {
+  return useQuery({
+    queryKey: keys.banFailure(guildId, userId),
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/guilds/{guild_id}/diagnostics/failures/{user_id}", {
+          params: { path: { guild_id: guildId, user_id: userId } },
         }),
       ),
   });

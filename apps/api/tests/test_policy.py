@@ -81,9 +81,14 @@ def test_a_caller_with_nothing_resolved_is_refused_everything() -> None:
     assert not any(allows(operation, context) for operation in Operation)
 
 
-SYSTEMS_OWN = {Operation.REGISTER_GUILD, Operation.RELAY_EVENT}
-"""The two things that follow from Discord telling Timothy something, rather than from
-anyone asking: the bot joining or leaving a guild, and a gateway event."""
+SYSTEMS_OWN = {
+    Operation.REGISTER_GUILD,
+    Operation.RELAY_EVENT,
+    Operation.REPORT_GUILD_DIAGNOSTICS,
+}
+"""The things that follow from Discord telling Timothy something, rather than from anyone
+asking: the bot joining or leaving a guild, a gateway event, and the bot reporting what
+its own cache says about a guild's roles (ADR 0016)."""
 
 
 def test_the_system_actor_may_only_do_its_own_work() -> None:

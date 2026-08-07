@@ -19,6 +19,11 @@ ADMINISTRATOR: Final = 1 << 3
 reads (ADR 0001), though the whole bitfield is carried. Authority over pools is a role
 rather than a permission, and is read from :attr:`Member.role_ids` (ADR 0012)."""
 
+BAN_MEMBERS: Final = 1 << 2
+"""Discord's `BAN_MEMBERS` permission bit. Not an authorization question at all — nobody's
+authority over Timothy is derived from it. It is read only of *Timothy itself*, to say
+whether a guild has granted it the one permission its whole job depends on (ADR 0016)."""
+
 
 @dataclass(frozen=True, slots=True)
 class Member:

@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     command should ship it. Off for a second instance run against the same application,
     which would otherwise overwrite the live surface with whatever it happens to have."""
 
+    diagnostics_interval_seconds: float = Field(default=900.0, gt=0)
+    """How often to report what the gateway sees of every guild (ADR 0016).
+
+    Fifteen minutes, spread evenly across the guilds rather than sent in one burst. The
+    backend's `TIMOTHY_DIAGNOSTICS_INTERVAL` should match: it is what decides when a
+    snapshot is old enough to warn an administrator about."""
+
     request_timeout: float = Field(default=2.5, gt=0)
     """Seconds to wait for the backend.
 

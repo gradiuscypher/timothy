@@ -55,6 +55,14 @@ def test_the_gateway_is_on_by_default() -> None:
     assert Settings().gateway_enabled is True
 
 
+def test_the_diagnostics_cadence_matches_what_compose_documents() -> None:
+    """The backend reads the same variable to decide when a snapshot has gone stale, so
+    the two drifting apart would have administrators told their data was old on the
+    schedule the bot was still meeting."""
+    assert Settings().diagnostics_interval_seconds == 900.0
+    assert Settings(diagnostics_interval_seconds="900").diagnostics_interval_seconds == 900.0
+
+
 def test_the_backend_timeout_is_inside_discord_s_deadline() -> None:
     """Three seconds is the interaction deadline. An answer that arrives later cannot be
     delivered, so waiting for it only costs the moderator the error message."""

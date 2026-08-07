@@ -318,6 +318,45 @@ export function Badge({
   );
 }
 
+const BANNER_TONES = {
+  ok: "bg-ok/10 text-ok",
+  warn: "bg-warn/10 text-warn",
+  danger: "bg-danger/10 text-danger",
+} as const;
+
+/**
+ * A standing statement about the screen, above the content it qualifies.
+ *
+ * Not an `ErrorNote`: that reports what a button just did, and these are true before
+ * anybody touches anything — enforcement is paused here, dry run is on, Timothy cannot
+ * ban in this server.
+ *
+ * The `role` is the caller's, because the two are not interchangeable for anyone using a
+ * screen reader. `status` is announced politely and is right for a state the page is
+ * simply in; `alert` interrupts, and is for the ones that mean something is broken and
+ * nothing is working until it is fixed.
+ */
+export function Banner({
+  tone = "warn",
+  role = "status",
+  className,
+  children,
+}: {
+  tone?: keyof typeof BANNER_TONES;
+  role?: "status" | "alert";
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role={role}
+      className={cn("rounded-md px-4 py-3 text-sm", BANNER_TONES[tone], className)}
+    >
+      {children}
+    </div>
+  );
+}
+
 /**
  * Whatever went wrong, in the backend's own words.
  *
@@ -384,8 +423,20 @@ export function Row({ children }: { children: ReactNode }) {
   return <tr className="border-b border-surface-border/60 last:border-0">{children}</tr>;
 }
 
-export function Cell({ className, children }: { className?: string; children: ReactNode }) {
-  return <td className={cn("px-2 py-2 align-top", className)}>{children}</td>;
+export function Cell({
+  className,
+  colSpan,
+  children,
+}: {
+  className?: string;
+  colSpan?: number;
+  children: ReactNode;
+}) {
+  return (
+    <td colSpan={colSpan} className={cn("px-2 py-2 align-top", className)}>
+      {children}
+    </td>
+  );
 }
 
 // -- confirmation ----------------------------------------------------------------------

@@ -5,6 +5,7 @@ import type { ActivityPoint, OpsOverview } from "@/api/client";
 import { useOpsActivity, useOpsFailures, useOpsOverview } from "@/api/hooks";
 import {
   Badge,
+  Banner,
   Card,
   CardTitle,
   Cell,
@@ -109,14 +110,7 @@ function Posture({ data }: { data: OpsOverview }) {
 
   return (
     <div className="space-y-3">
-      <div
-        role="status"
-        className={
-          data.dry_run
-            ? "rounded-md bg-warn/10 px-4 py-3 text-sm text-warn"
-            : "rounded-md bg-ok/10 px-4 py-3 text-sm text-ok"
-        }
-      >
+      <Banner tone={data.dry_run ? "warn" : "ok"}>
         {data.dry_run ? (
           <>
             <strong>Dry run is ON.</strong> Timothy is recording what it would do and
@@ -127,11 +121,11 @@ function Posture({ data }: { data: OpsOverview }) {
             <strong>Dry run is OFF.</strong> Timothy is banning and unbanning for real.
           </>
         )}
-      </div>
+      </Banner>
       {problems.map((problem) => (
-        <p key={problem} role="alert" className="rounded-md bg-danger/10 px-4 py-3 text-sm text-danger">
+        <Banner key={problem} tone="danger" role="alert">
           {problem}
-        </p>
+        </Banner>
       ))}
     </div>
   );

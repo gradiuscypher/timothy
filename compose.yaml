@@ -164,6 +164,10 @@ services:
       TIMOTHY_AUTO_SUBSCRIBE_POOL: ${TIMOTHY_AUTO_SUBSCRIBE_POOL:-global}
       TIMOTHY_PERMISSION_CACHE_TTL: ${TIMOTHY_PERMISSION_CACHE_TTL:-60}
       TIMOTHY_SWEEP_INTERVAL: ${TIMOTHY_SWEEP_INTERVAL:-604800}
+      # How long a guild's diagnostics snapshot may go unrefreshed before the backend
+      # calls it stale. The bot's own interval below is what sets the cadence; these two
+      # read the same variable so they cannot drift apart.
+      TIMOTHY_DIAGNOSTICS_INTERVAL: ${TIMOTHY_DIAGNOSTICS_INTERVAL:-900}
       TIMOTHY_ENFORCEMENT_BURST_LIMIT: ${TIMOTHY_ENFORCEMENT_BURST_LIMIT:-25}
       TIMOTHY_WORKERS_ENABLED: ${TIMOTHY_WORKERS_ENABLED:-true}
       TIMOTHY_JOB_POLL_INTERVAL: ${TIMOTHY_JOB_POLL_INTERVAL:-1}
@@ -205,6 +209,10 @@ services:
       TIMOTHY_API_BASE_URL: http://backend:8000
       TIMOTHY_GATEWAY_ENABLED: ${TIMOTHY_GATEWAY_ENABLED:-true}
       TIMOTHY_SYNC_COMMANDS: ${TIMOTHY_SYNC_COMMANDS:-true}
+      # How often to report what the gateway sees of every guild (ADR 0016), spread
+      # evenly across the interval rather than sent in one burst. The backend's
+      # TIMOTHY_DIAGNOSTICS_INTERVAL above is the same value.
+      TIMOTHY_DIAGNOSTICS_INTERVAL_SECONDS: ${TIMOTHY_DIAGNOSTICS_INTERVAL:-900}
       TIMOTHY_LOG_LEVEL: ${TIMOTHY_LOG_LEVEL:-INFO}
       TIMOTHY_LOG_DIR: /logs
       TIMOTHY_LOG_FORMAT: json

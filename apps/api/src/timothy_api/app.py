@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from timothy_api import __version__, errors, routers
 from timothy_api.db import Database
+from timothy_api.diagnostics import RefreshQueue
 from timothy_api.discord_adapter import DiscordAdapter
 from timothy_api.enforcement import Enforcer, JobContext, SelfUnbans, Sweeper, Worker
 from timothy_api.identity import authenticate
@@ -142,6 +143,7 @@ def create_app(
         app.state.oauth = login
         app.state.resolver = PermissionResolver(port, ttl=resolved.permission_cache_ttl)
         app.state.self_unbans = self_unbans
+        app.state.refresh_queue = RefreshQueue()
         app.state.enforcer = enforcer
         app.state.worker = Worker(context)
         app.state.sweeper = Sweeper(database.sessions, resolved)

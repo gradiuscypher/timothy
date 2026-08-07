@@ -145,6 +145,30 @@ class Api:
         """Tell Timothy it has left a guild, and let its configuration cascade away."""
         await self._request("DELETE", "/guilds/{guild_id}", guild_id=guild_id)
 
+    # -- diagnostics -------------------------------------------------------------------
+
+    async def report_diagnostics(
+        self, guild_id: int, snapshot: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Tell the backend what the gateway sees of a guild (ADR 0016).
+
+        Idempotent and wholesale: the backend replaces the guild's roles with what this
+        carries, so one deleted in Discord stops being reported rather than lingering.
+        """
+        return await self._request(
+            "PUT", "/guilds/{guild_id}/diagnostics", body=snapshot, guild_id=guild_id
+        )
+
+    async def pending_diagnostics(self) -> list[int]:
+        """Guilds an administrator has asked to have looked at again, out of turn.
+
+        The backend cannot reach the bot, so a refresh button is a row it records and this
+        collects. Reading drains it: a request answers for one round, and a queue that
+        needed acknowledging would grow without bound whenever the bot was down.
+        """
+        answered = await self._request("GET", "/diagnostics/pending")
+        return [int(guild_id) for guild_id in answered["guild_ids"]]
+
     # -- pools and listings ------------------------------------------------------------
 
     async def create_pool(self, *, name: str, description: str) -> dict[str, Any]:

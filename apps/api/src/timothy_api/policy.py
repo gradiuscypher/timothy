@@ -55,8 +55,10 @@ class Operation(StrEnum):
     READ_AUDIT_LOG = "read_audit_log"
     READ_OPS = "read_ops"
     READ_ENFORCEMENT = "read_enforcement"
+    READ_GUILD_DIAGNOSTICS = "read_guild_diagnostics"
     REGISTER_GUILD = "register_guild"
     RELAY_EVENT = "relay_event"
+    REPORT_GUILD_DIAGNOSTICS = "report_guild_diagnostics"
 
 
 class Requirement(StrEnum):
@@ -124,7 +126,15 @@ REQUIREMENTS: Final[Mapping[Operation, Requirement]] = {
     # the same work as producing the list.
     Operation.LIST_GUILDS: Requirement.ANY_GUILD_MEMBER,
     Operation.READ_ENFORCEMENT: Requirement.TARGET_GUILD_ADMIN,
+    # Follows READ_ENFORCEMENT rather than READ_OPS: this names the guild's own roles and
+    # who holds them, and it exists so the person who can actually move a role is the
+    # person who gets told which one to move.
+    Operation.READ_GUILD_DIAGNOSTICS: Requirement.TARGET_GUILD_ADMIN,
     Operation.REGISTER_GUILD: Requirement.SYSTEM,
+    # An observation, not a request. The bot reads its own gateway cache and says what it
+    # saw (ADR 0016); there is no human behind it to derive authority from, exactly as
+    # there is none behind a relayed event.
+    Operation.REPORT_GUILD_DIAGNOSTICS: Requirement.SYSTEM,
     # A gateway event is something that happened, not something anyone asked for. There
     # is no human behind `GUILD_MEMBER_ADD` to derive authority from, and the exception
     # ADR 0006 may create from an unban is Timothy's own — which is exactly why it must

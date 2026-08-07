@@ -12,13 +12,14 @@ everything else still works. That failure is silent by nature, so it is checked 
 logged on connect.
 """
 
+import asyncio
 import logging
 
 import discord
 from discord import app_commands
 from discord.ext import tasks
 
-from timothy_bot import commands, embeds, relay
+from timothy_bot import commands, diagnostics, embeds, relay
 from timothy_bot.api import Api
 from timothy_bot.settings import Settings
 
@@ -35,6 +36,19 @@ can go a long time without one — long enough for a guild whose registration fa
 had, which for a guild registered for the first time is no name at all. This is the same
 idempotent announcement `on_ready` already makes, run on a timer as well, so that kind of
 drift corrects itself rather than waiting on an incidental reconnect."""
+
+DIAGNOSTICS_INTERVAL_SECONDS = 900.0
+"""Placeholder for the reporting loop's decorator, which needs a literal and cannot read
+`self`. The real cadence is `TIMOTHY_DIAGNOSTICS_INTERVAL_SECONDS`, applied with
+`change_interval` before the loop starts."""
+
+DIAGNOSTICS_POLL_SECONDS = 20
+"""How often to ask the backend whether anybody has pressed Refresh.
+
+One small request to a service on the same compose network, so the cost of checking often
+is close to nothing — and the thing being waited on is a person sitting in front of the
+web UI, who should not have to wait out a fifteen-minute round to see whether the role
+they just moved fixed it."""
 
 
 def intents() -> discord.Intents:
@@ -145,6 +159,13 @@ class TimothyBot(discord.Client):
         await relay.announce_guilds(self.api, [(guild.id, guild.name) for guild in self.guilds])
         if not self._reconcile_guilds.is_running():
             self._reconcile_guilds.start()
+        if not self._report_diagnostics.is_running():
+            self._report_diagnostics.change_interval(
+                seconds=self.settings.diagnostics_interval_seconds
+            )
+            self._report_diagnostics.start()
+        if not self._collect_diagnostics_requests.is_running():
+            self._collect_diagnostics_requests.start()
 
     @tasks.loop(hours=RECONCILE_INTERVAL_HOURS)
     async def _reconcile_guilds(self) -> None:
@@ -156,6 +177,44 @@ class TimothyBot(discord.Client):
         failed to relay in the meantime.
         """
         await relay.announce_guilds(self.api, [(guild.id, guild.name) for guild in self.guilds])
+
+    @tasks.loop(seconds=DIAGNOSTICS_INTERVAL_SECONDS)
+    async def _report_diagnostics(self) -> None:
+        """Tell the backend what every guild looks like, spread across the interval.
+
+        Staggered rather than sent in one burst, for the reason the sweep is
+        (`timothy_api.enforcement.sweep`): the backend has a single SQLite writer, and a
+        hundred guilds' worth of role tables rewritten at the same instant is one tick
+        that costs far more than the other eight hundred and ninety-nine.
+
+        The interval is reset from settings before this starts; the decorator needs a
+        literal and cannot read `self`.
+        """
+        guilds = list(self.guilds)
+        if not guilds:
+            return
+
+        spacing = self.settings.diagnostics_interval_seconds / len(guilds)
+        reported = 0
+        for position, guild in enumerate(guilds):
+            if position:
+                await asyncio.sleep(spacing)
+            reported += await diagnostics.report(self.api, guild)
+        log.info("reported diagnostics for %d of %d guild(s)", reported, len(guilds))
+
+    @tasks.loop(seconds=DIAGNOSTICS_POLL_SECONDS)
+    async def _collect_diagnostics_requests(self) -> None:
+        """Re-check the guilds somebody has pressed Refresh on.
+
+        The backend has no way to reach the bot, so this is the other half of that button:
+        it records the request and the bot comes and gets it.
+        """
+        wanted = await diagnostics.requested(self.api)
+        if not wanted:
+            return
+        here = [guild for guild in self.guilds if guild.id in wanted]
+        log.info("re-checking %d guild(s) on request", len(here))
+        await diagnostics.report_all(self.api, here)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """Timothy was added to a guild."""

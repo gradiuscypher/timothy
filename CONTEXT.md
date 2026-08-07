@@ -93,3 +93,30 @@ _Avoid_: unban (that is the raw Discord action), rollback, undo
 The mode in which Timothy records every enforcement it would perform but issues nothing to
 Discord. Fails safe: if the setting cannot be read, dry run is on.
 _Avoid_: benchmark, test mode, simulation
+
+### Diagnostics
+
+**Diagnostics Snapshot**:
+What the bot last saw of one guild's shape — Timothy's own permissions and highest role
+there, and every role with its position and how many people hold it. Observed by the bot
+from the gateway's own cache and stored by the backend (ADR 0016), never asked of Discord's
+REST API. A guild that has none has not been checked, which is not the same as a guild
+where everything is fine.
+_Avoid_: health check, scan, audit (that is the Audit Log)
+
+**Ban Readiness**:
+Whether Timothy holds `BAN_MEMBERS` in a guild at all. The one condition that makes every
+ban-level subscription there fail, and the only one shown as a banner.
+_Avoid_: permissions check, status
+
+**Unbannable Role**:
+A role positioned at or above Timothy's own highest, so Discord will never let it ban
+anyone holding one. *At* counts: role hierarchy is a strict inequality, and a role level
+with Timothy is as out of reach as one above it.
+_Avoid_: blocked role, protected role, immune role
+
+**Ban Blocker**:
+Why one particular ban failed — no ban permission, guild owner, outranked, left guild, or
+unknown. Resolved against Discord at the moment somebody asks, so it describes whether the
+ban would work *now*.
+_Avoid_: error, failure reason (that is the stored Discord message the blocker explains)

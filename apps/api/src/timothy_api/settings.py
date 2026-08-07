@@ -224,6 +224,16 @@ class Settings(BaseSettings):
 
     permission_cache_ttl: Duration = timedelta(seconds=60)
 
+    diagnostics_interval: Duration = timedelta(minutes=15)
+    """How often the bot is expected to report what it sees of each guild (ADR 0016).
+
+    The backend never acts on this — the loop that does the reporting is the bot's, and
+    its `TIMOTHY_DIAGNOSTICS_INTERVAL` is what sets the cadence. This is only how long a
+    snapshot may go unrefreshed before the API calls it stale, and the two are set from
+    the same environment in compose. A backend configured shorter than the bot merely
+    tells administrators their snapshot is old, which is the harmless direction.
+    """
+
     auto_subscribe_pool: str = "global"
     """The pool a guild is subscribed to when Timothy joins it (ADR 0002).
 

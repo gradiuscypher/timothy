@@ -90,6 +90,7 @@ def test_the_whole_compose_environment_starts_the_process() -> None:
         auto_subscribe_pool="global",
         permission_cache_ttl="60",
         sweep_interval="604800",
+        diagnostics_interval="900",
         enforcement_burst_limit="25",
         workers_enabled="true",
         job_poll_interval="1",
@@ -97,6 +98,7 @@ def test_the_whole_compose_environment_starts_the_process() -> None:
     )
 
     assert settings.sweep_interval == timedelta(days=7)
+    assert settings.diagnostics_interval == timedelta(minutes=15)
     assert settings.workers_enabled is True
 
 

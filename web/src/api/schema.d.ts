@@ -518,6 +518,146 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/guilds/{guild_id}/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Diagnostics
+         * @description Whether Timothy can ban in this guild, and which roles it can never reach.
+         *
+         *     Costs no Discord call at all. Everything here was observed by the bot and stored.
+         *
+         *     Raises:
+         *         HTTPException: 404 if Timothy is not in the guild, or has never looked at it.
+         */
+        get: operations["read_diagnostics_guilds__guild_id__diagnostics_get"];
+        /**
+         * Report Diagnostics
+         * @description Record what the gateway sees of this guild.
+         *
+         *     Idempotent and wholesale: the roles are replaced rather than merged, so one deleted in
+         *     Discord stops being reported here.
+         */
+        put: operations["report_diagnostics_guilds__guild_id__diagnostics_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/guilds/{guild_id}/diagnostics/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Diagnostics
+         * @description Ask for this guild to be looked at again, out of turn.
+         *
+         *     202 and not 200: the backend cannot reach the bot, so all this does is record the
+         *     request. The bot collects it on its next poll and the snapshot changes underneath the
+         *     caller, which is why the UI polls rather than reading this response for an answer.
+         */
+        post: operations["refresh_diagnostics_guilds__guild_id__diagnostics_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/guilds/{guild_id}/diagnostics/failures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Ban Failures
+         * @description Every ban Timothy tried to issue here and could not, newest first.
+         *
+         *     Database only, deliberately — no Discord call, so the list appears at once however
+         *     long it is. The explanation of any one row is a separate request, made when somebody
+         *     actually asks for it.
+         *
+         *     The join to `pools` is an outer one because `enforcement_outcomes` holds no foreign
+         *     keys (ADR 0005): a failure survives the pool that caused it being deleted, and losing
+         *     those rows would quietly shorten the list.
+         */
+        get: operations["list_ban_failures_guilds__guild_id__diagnostics_failures_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/guilds/{guild_id}/diagnostics/failures/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Diagnose Ban Failure
+         * @description Why Timothy could not ban this user here, as things stand now.
+         *
+         *     One `fetch_member` — the port's existing operation, because what the domain needs is
+         *     the roles this person holds and nothing wider (ADR 0007 stands unamended). Their
+         *     positions come from the stored snapshot.
+         *
+         *     Discord failing here does not fail the request. Somebody is reading this *because*
+         *     something is wrong, and answering 502 would replace a partial explanation with none;
+         *     the verdict degrades to `unknown` and Discord's own words from the failed outcome are
+         *     still shown.
+         *
+         *     Raises:
+         *         HTTPException: 404 if Timothy is not in the guild, or has never looked at it.
+         */
+        get: operations["diagnose_ban_failure_guilds__guild_id__diagnostics_failures__user_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/diagnostics/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pending Diagnostics
+         * @description The guilds an administrator has asked to have looked at again.
+         *
+         *     Reading drains: see :meth:`~timothy_api.diagnostics.RefreshQueue.drain`. Not scoped to
+         *     a guild, because the caller is the bot asking what work there is rather than anybody
+         *     asking about somewhere in particular.
+         */
+        get: operations["pending_diagnostics_diagnostics_pending_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/events/member-join": {
         parameters: {
             query?: never;
@@ -778,6 +918,56 @@ export interface components {
             at: string;
         };
         /**
+         * BanBlocker
+         * @description Why one ban did not happen.
+         *
+         *     Ordered as :func:`diagnose` checks them, because each earlier answer subsumes the
+         *     ones below it: a Timothy with no ban permission is not *also* usefully described as
+         *     outranked.
+         * @enum {string}
+         */
+        BanBlocker: "no_ban_permission" | "guild_owner" | "outranked" | "left_guild" | "unknown";
+        /**
+         * BanFailureDiagnosis
+         * @description Why one ban failed, resolved against Discord now rather than when it failed.
+         *
+         *     Live on purpose. Somebody reading this is about to go and change a role, and the
+         *     question they are really asking is "would it work today" — an explanation frozen at
+         *     the moment of failure would keep naming a conflict they had already fixed.
+         */
+        BanFailureDiagnosis: {
+            /** User Id */
+            user_id: string;
+            blocker: components["schemas"]["BanBlocker"];
+            /** Blocking Roles */
+            blocking_roles: components["schemas"]["RoleRead"][];
+            /** Timothy Top Role Position */
+            timothy_top_role_position: number;
+            /** Timothy Top Role Name */
+            timothy_top_role_name: string | null;
+            /** Detail */
+            detail: string | null;
+        };
+        /**
+         * BanFailureRead
+         * @description One ban Timothy tried to issue here and could not.
+         */
+        BanFailureRead: {
+            /** User Id */
+            user_id: string;
+            /** Pool Id */
+            pool_id: number;
+            /** Pool Name */
+            pool_name: string | null;
+            /** Reason */
+            reason: string | null;
+            /**
+             * Attempted At
+             * Format: date-time
+             */
+            attempted_at: string;
+        };
+        /**
          * BulkListingCreate
          * @description Add many users to one pool in a single call.
          *
@@ -837,6 +1027,47 @@ export interface components {
             url?: string | null;
             /** Kind */
             kind?: string | null;
+        };
+        /**
+         * DiagnosticsRefreshAck
+         * @description A one-off refresh has been asked for.
+         *
+         *     Asked for, not done: the backend cannot reach the bot, so this records the request
+         *     and the bot picks it up on its next poll (ADR 0016). The caller polls the snapshot to
+         *     see it land.
+         */
+        DiagnosticsRefreshAck: {
+            /** Guild Id */
+            guild_id: string;
+            /** Requested */
+            requested: boolean;
+        };
+        /**
+         * DiagnosticsReport
+         * @description What the bot saw of one guild, read out of the gateway's own cache.
+         *
+         *     Every field is a fact about Discord that Timothy only observes. Nothing here is a
+         *     decision, which is why the whole payload can be replaced on every round without
+         *     anybody losing anything they set.
+         */
+        DiagnosticsReport: {
+            /** Can Ban */
+            can_ban: boolean;
+            /** Is Administrator */
+            is_administrator: boolean;
+            /** Top Role Position */
+            top_role_position: number;
+            /** Top Role Name */
+            top_role_name?: string | null;
+            /** Owner Id */
+            owner_id: string;
+            /**
+             * Member Counts Complete
+             * @default true
+             */
+            member_counts_complete: boolean;
+            /** Roles */
+            roles?: components["schemas"]["RoleReport"][];
         };
         /**
          * EnforcementOutcomeRead
@@ -938,6 +1169,39 @@ export interface components {
             guild_id: string;
             /** User Id */
             user_id: string;
+        };
+        /**
+         * GuildDiagnosticsRead
+         * @description Whether Timothy can do its job in one guild, and what it cannot reach.
+         *
+         *     A guild the bot has never reported on answers 404 rather than a row of defaults. An
+         *     all-clear nobody measured is the one answer worse than no answer, and there is no
+         *     honest value for `can_ban` to take when nothing has looked.
+         */
+        GuildDiagnosticsRead: {
+            /** Guild Id */
+            guild_id: string;
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /** Stale */
+            stale: boolean;
+            /** Can Ban */
+            can_ban: boolean;
+            /** Is Administrator */
+            is_administrator: boolean;
+            /** Top Role Position */
+            top_role_position: number;
+            /** Top Role Name */
+            top_role_name: string | null;
+            /** Member Counts Complete */
+            member_counts_complete: boolean;
+            /** Unbannable Roles */
+            unbannable_roles: components["schemas"]["RoleRead"][];
+            /** Unbannable Members */
+            unbannable_members: number | null;
         };
         /**
          * GuildRead
@@ -1187,6 +1451,14 @@ export interface components {
          */
         OutcomeStatus: "banned" | "warned" | "failed" | "skipped_exception";
         /**
+         * PendingDiagnostics
+         * @description The guilds someone has asked the bot to re-check. Draining, so reading is taking.
+         */
+        PendingDiagnostics: {
+            /** Guild Ids */
+            guild_ids: string[];
+        };
+        /**
          * PoolCreate
          * @description Create a pool.
          */
@@ -1254,6 +1526,41 @@ export interface components {
             sweep_outstanding: number;
             /** Oldest Pending At */
             oldest_pending_at: string | null;
+        };
+        /**
+         * RoleRead
+         * @description One of a guild's roles, as the gateway last saw it (ADR 0016).
+         */
+        RoleRead: {
+            /** Role Id */
+            role_id: string;
+            /** Name */
+            name: string;
+            /** Position */
+            position: number;
+            /** Member Count */
+            member_count: number | null;
+            /** Managed */
+            managed: boolean;
+        };
+        /**
+         * RoleReport
+         * @description One role, as the bot reports it. The write side of :class:`RoleRead`.
+         */
+        RoleReport: {
+            /** Role Id */
+            role_id: string;
+            /** Name */
+            name: string;
+            /** Position */
+            position: number;
+            /** Member Count */
+            member_count?: number | null;
+            /**
+             * Managed
+             * @default false
+             */
+            managed: boolean;
         };
         /**
          * SignedInRead
@@ -2364,6 +2671,222 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EnforcementOutcomeRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_diagnostics_guilds__guild_id__diagnostics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A Discord guild ID. */
+                guild_id: string;
+            };
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuildDiagnosticsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_diagnostics_guilds__guild_id__diagnostics_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A Discord guild ID. */
+                guild_id: string;
+            };
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagnosticsReport"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuildDiagnosticsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_diagnostics_guilds__guild_id__diagnostics_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A Discord guild ID. */
+                guild_id: string;
+            };
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagnosticsRefreshAck"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_ban_failures_guilds__guild_id__diagnostics_failures_get: {
+        parameters: {
+            query?: {
+                /** @description How many failures to return. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description A Discord guild ID. */
+                guild_id: string;
+            };
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BanFailureRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    diagnose_ban_failure_guilds__guild_id__diagnostics_failures__user_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A Discord guild ID. */
+                guild_id: string;
+                /** @description A Discord user ID. */
+                user_id: string;
+            };
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BanFailureDiagnosis"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pending_diagnostics_diagnostics_pending_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingDiagnostics"];
                 };
             };
             /** @description Validation Error */

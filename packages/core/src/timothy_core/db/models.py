@@ -203,6 +203,72 @@ class NotificationChannel(Base):
     created_at: Mapped[CreatedAt]
 
 
+class GuildDiagnostics(Base):
+    """What Timothy can do in one guild, as the gateway last saw it (ADR 0016).
+
+    A cache of Discord's own state, not a decision of Timothy's — every column here is
+    something an administrator changes in Discord and Timothy only observes. It therefore
+    cascades away with the guild, unlike `enforcement_outcomes`: a snapshot of somewhere
+    Timothy is no longer describes nothing anybody can act on.
+    """
+
+    __tablename__ = "guild_diagnostics"
+
+    guild_id: Mapped[Snowflake] = mapped_column(
+        ForeignKey("guilds.guild_id", ondelete="CASCADE"),
+        primary_key=True,
+        autoincrement=False,
+    )
+    can_ban: Mapped[bool]
+    """Whether Timothy holds `BAN_MEMBERS` here, `ADMINISTRATOR` already folded in."""
+
+    is_administrator: Mapped[bool]
+    """Kept beside `can_ban` because it changes the advice, not the verdict: an
+    administrator that still cannot ban has a role hierarchy problem and nothing else."""
+
+    top_role_position: Mapped[int]
+    top_role_name: Mapped[str | None] = mapped_column(String(100))
+    owner_id: Mapped[Snowflake]
+    """Who owns the guild. Outside the role hierarchy entirely, so it is the one fact a
+    position comparison can never derive."""
+
+    member_counts_complete: Mapped[bool] = mapped_column(default=True)
+    """Whether the counts in `guild_roles` can be believed.
+
+    False when the bot's member cache was incomplete when it looked. The counts are then
+    stored as NULL rather than as zero — see :class:`GuildRole.member_count`."""
+
+    observed_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
+class GuildRole(Base):
+    """One of a guild's roles, as the gateway last saw it.
+
+    Replaced wholesale on every snapshot rather than merged, so a role the guild has
+    deleted stops being reported instead of lingering as a blocker nobody can find.
+    """
+
+    __tablename__ = "guild_roles"
+
+    guild_id: Mapped[Snowflake] = mapped_column(
+        ForeignKey("guilds.guild_id", ondelete="CASCADE"),
+        primary_key=True,
+        autoincrement=False,
+    )
+    role_id: Mapped[Snowflake] = mapped_column(primary_key=True, autoincrement=False)
+    name: Mapped[str] = mapped_column(String(100))
+    position: Mapped[int]
+    member_count: Mapped[int | None]
+    """How many hold it, or NULL when it could not be counted.
+
+    Nullable deliberately. Zero is a claim that the blind spot is empty, and a guild whose
+    members were never chunked would make that claim about every role it has."""
+
+    managed: Mapped[bool] = mapped_column(default=False)
+    """Discord's own: an integration's role, a booster role, a bot's. Reported separately
+    because "move Timothy above it" is the only advice that applies to one."""
+
+
 class EnforcementOutcome(Base):
     """The recorded result of enforcing one listing in one guild.
 

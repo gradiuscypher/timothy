@@ -43,9 +43,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={notify}>
       {children}
+      {/* `aria-live` and nothing else. `role="status"` would mean the same thing to a
+          screen reader and would additionally make this permanently-mounted, usually
+          empty box answer to every query for a status region on the page — including the
+          ones looking for a screen's own banner. */}
       <div
-        role="status"
         aria-live="polite"
+        aria-label="Notifications"
         className="fixed right-4 bottom-4 z-50 flex flex-col gap-2"
       >
         {toasts.map((toast) => (
