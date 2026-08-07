@@ -6,6 +6,11 @@ rewrite plan, and [docs/adr/](./docs/adr/) for the decisions behind it.
 
 ## Development
 
+There is a `Makefile` over the commands below — `make` lists them, `make check` runs
+everything CI would, and `make queue` / `make jobs-log` are the operational ones worth
+knowing about. It is a convenience over this file and not a second source of truth: if the
+two ever disagree, this file is right.
+
 Requires [uv](https://docs.astral.sh/uv/). Python 3.13 is fetched automatically.
 
 ```sh
@@ -308,8 +313,17 @@ it in VictoriaLogs, in a named volume, for a year (ADR 0015). That is what makes
 this start?" answerable eight months later.
 
 `docker compose logs` still works for recent history — the daemon keeps a bounded buffer
-behind the collector — but the backend and bot lines are JSON now, so `| jq -r .message`
-is worth having in your shell history.
+behind the collector — but the backend and bot lines are JSON now. Two things bite when
+piping them to `jq`, so `make logs` / `make errors` / `make jobs-log` exist to not get
+them wrong twice:
+
+```bash
+# --no-log-prefix, because `backend-1  | ` in front of each line is not JSON and stops jq
+# at column 10. fromjson? // empty, because one non-JSON line would otherwise abort the
+# whole pipe rather than being skipped.
+docker compose logs --no-log-prefix backend \
+  | jq -R -r 'fromjson? // empty | "\(.ts) \(.level) \(.message)"'
+```
 
 #### Reading them
 
