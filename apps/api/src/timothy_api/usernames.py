@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import select, union
 
+from timothy_api.search import matching
 from timothy_core.db.models import (
     EnforcementOutcome,
     GuildException,
@@ -45,6 +46,12 @@ a login or a relayed join down with it."""
 MAX_LOOKUP: Final = 200
 """How many IDs one resolution may ask about. A page renders at most a couple of
 hundred rows, and the cap keeps a hand-written query from asking for the whole table."""
+
+MAX_MATCHES: Final = 25
+"""How many candidates a search by name may return. Enough that a common first name
+still shows the person wanted, few enough that the answer is a list somebody reads
+rather than a page they page through — this is a way of reaching an ID, not a directory.
+"""
 
 
 def _now() -> datetime:
@@ -105,6 +112,34 @@ async def resolve(session: AsyncSession, user_ids: Iterable[int]) -> list[UserNa
         return []
     rows = await session.scalars(
         select(UserName).where(UserName.user_id.in_(wanted), UserName.name.is_not(None))
+    )
+    return list(rows)
+
+
+async def search(session: AsyncSession, query: str) -> list[UserName]:
+    """The named rows whose name contains `query`, ignoring case.
+
+    The inverse of :func:`resolve`, and the reason the backfill (ADR 0017) is worth its
+    Discord calls: a moderator who remembers what somebody was called but not their
+    snowflake has, until now, had nothing to type. What comes back is candidates — the
+    cache holds one name per ID and names are not unique, so choosing among them is the
+    reader's job and not this query's.
+
+    Rows recording that Discord had nobody are excluded exactly as they are in a
+    resolution: a NULL name matches nothing, and a search must not be the one place an
+    ID with no name surfaces.
+
+    Ordered by name so the list reads alphabetically, then by ID so that two people
+    called the same thing come back in a stable order rather than whatever the scan
+    happened to yield.
+    """
+    if not query.strip():
+        return []
+    rows = await session.scalars(
+        select(UserName)
+        .where(UserName.name.is_not(None), matching(query, UserName.name))
+        .order_by(UserName.name, UserName.user_id)
+        .limit(MAX_MATCHES)
     )
     return list(rows)
 

@@ -25,7 +25,7 @@ from timothy_api.schemas import (
 )
 from timothy_api.search import MAX_QUERY, matching
 from timothy_core.actors import Actor
-from timothy_core.db.models import Listing, Pool
+from timothy_core.db.models import Listing, Pool, UserName
 
 router = APIRouter(tags=["listings"])
 
@@ -53,7 +53,10 @@ Search = Annotated[
     Query(
         min_length=1,
         max_length=MAX_QUERY,
-        description="Match against the reason, or against the user ID as text.",
+        description=(
+            "Match against the reason, the user ID as text, or the last name Timothy "
+            "saw for that user."
+        ),
     ),
 ]
 
@@ -105,14 +108,23 @@ async def list_pool_listings(
 
     Ordered by id, which is also the page cursor. `created_at` is what a human reads but
     it is not unique, and a cursor that can repeat a value can skip a row.
+
+    The search reaches the name cache as well as the row: names are the only handle most
+    readers have on a snowflake, and a box that finds a reason but not the person it is
+    about would send them to the lookup page and back. An outer join, because a listing
+    whose user nobody has ever seen a name for still has to appear — with an inner one a
+    pool would quietly shrink to the users Timothy happens to have names for.
     """
     pool = await get_pool(session, name)
+    named = (UserName, UserName.user_id == Listing.user_id)
     narrowed = [Listing.pool_id == pool.id]
     if q is not None:
-        narrowed.append(matching(q, Listing.reason, Listing.user_id))
+        narrowed.append(matching(q, Listing.reason, Listing.user_id, UserName.name))
 
-    total = await session.scalar(select(func.count()).select_from(Listing).where(*narrowed))
-    page = select(Listing).where(*narrowed).order_by(Listing.id).limit(limit)
+    total = await session.scalar(
+        select(func.count()).select_from(Listing).outerjoin(*named).where(*narrowed)
+    )
+    page = select(Listing).outerjoin(*named).where(*narrowed).order_by(Listing.id).limit(limit)
     if after_id is not None:
         page = page.where(Listing.id > after_id)
 

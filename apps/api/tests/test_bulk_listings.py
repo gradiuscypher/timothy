@@ -32,6 +32,16 @@ def _page(client: TestClient, query: str = "") -> Any:  # noqa: ANN401 — the p
     return client.get(f"/pools/spam/listings{query}", headers=headers(POOL_MANAGER)).json()
 
 
+def _name(client: TestClient, *, user_id: int, username: str) -> None:
+    """Teach Timothy what a user is called, the way the bot does — see `test_usernames`."""
+    response = client.post(
+        "/events/member-join",
+        json={"guild_id": str(GUILD), "user_id": str(user_id), "username": username},
+        headers=headers("system"),
+    )
+    assert response.status_code == 202, response.text
+
+
 # -- pagination ------------------------------------------------------------------------
 
 
@@ -115,6 +125,31 @@ def test_a_search_for_a_wildcard_is_a_search_for_that_character(pool: TestClient
     page = _page(pool, "?q=alt_account")
 
     assert [entry["user_id"] for entry in page["listings"]] == ["1000"]
+
+
+def test_search_matches_the_name_timothy_has_for_a_listed_user(pool: TestClient) -> None:
+    """The handle a moderator has on a snowflake is what the person is called. A box that
+    found the reason but not the name would send them to the lookup page and back."""
+    _add(pool, [1_000], reason="raiding")
+    _add(pool, [1_001], reason="raiding")
+    _name(pool, user_id=1_000, username="Nuisance")
+
+    page = _page(pool, "?q=nuisance")
+
+    assert [entry["user_id"] for entry in page["listings"]] == ["1000"]
+    assert page["total"] == 1
+
+
+def test_a_listing_whose_user_has_no_name_is_still_on_the_page(pool: TestClient) -> None:
+    """The join is outer for this reason: most of the migrated thousands have never been
+    seen, and an inner one would shrink a pool to the users Timothy happens to know."""
+    _add(pool, [1_000, 1_001])
+    _name(pool, user_id=1_000, username="Nuisance")
+
+    page = _page(pool)
+
+    assert [entry["user_id"] for entry in page["listings"]] == ["1000", "1001"]
+    assert page["total"] == 2
 
 
 def test_search_and_pagination_compose(pool: TestClient) -> None:

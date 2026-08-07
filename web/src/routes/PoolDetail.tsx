@@ -118,8 +118,8 @@ function Listings({ name, canManage }: { name: string; canManage: boolean }) {
               value={q}
               onChange={(event) => search(event.target.value)}
               aria-label="Search listings"
-              title="Matches the reason, or part of a user ID."
-              placeholder="Search listings"
+              title="Matches the reason, a name, or part of a user ID."
+              placeholder="Search name, ID or reason"
               type="search"
               className="w-56"
             />

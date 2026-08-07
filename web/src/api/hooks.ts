@@ -33,6 +33,7 @@ import {
   type JobStatus,
   type OpsOverview,
   type SubscriptionLevel,
+  type UserName,
 } from "./client";
 
 /**
@@ -52,6 +53,7 @@ export const keys = {
   listings: (name: string, q: string) => ["pools", name, "listings", q] as const,
   userListings: (userId: string) => ["users", userId, "listings"] as const,
   userNames: (ids: string[]) => ["users", "names", ids.join(",")] as const,
+  nameSearch: (q: string) => ["users", "search", q] as const,
   guilds: ["guilds"] as const,
   guild: (id: string) => ["guilds", id] as const,
   subscriptions: (id: string) => ["guilds", id, "subscriptions"] as const,
@@ -230,6 +232,26 @@ export function useUserNames(userIds: string[]): UseQueryResult<Map<string, stri
       const names = unwrap(await api.GET("/users/names", { params: { query: { id: ids } } }));
       return new Map(names.map((known) => [known.user_id, known.name]));
     },
+  });
+}
+
+/**
+ * Users whose name contains `q` — the way to a snowflake when the name is all somebody
+ * has.
+ *
+ * The other half of `useUserNames`, and deliberately not merged with it: that one is a
+ * page resolving the IDs it is already drawing, this one is a person typing. What comes
+ * back is candidates to choose from, never an answer to act on — a name is a label, not
+ * a key, so nothing here navigates on the caller's behalf.
+ *
+ * Not cached for long the way names are. A search is typed deliberately and read once,
+ * and somebody who just watched a user join expects to find them.
+ */
+export function useNameSearch(q: string): UseQueryResult<UserName[]> {
+  return useQuery({
+    queryKey: keys.nameSearch(q),
+    enabled: q.trim().length > 0,
+    queryFn: async () => unwrap(await api.GET("/users/search", { params: { query: { q } } })),
   });
 }
 

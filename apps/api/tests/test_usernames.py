@@ -142,3 +142,85 @@ def test_asking_about_too_many_ids_is_refused(registered: TestClient) -> None:
     )
 
     assert response.status_code == 422, response.text
+
+
+# -- finding an ID from a name -----------------------------------------------
+
+
+def search(client: TestClient, query: str, *, actor: int | str = MEMBER) -> dict[str, str]:
+    """Search by name, and read the candidates back as `{id: name}`."""
+    response = client.get("/users/search", params={"q": query}, headers=headers(actor))
+    assert response.status_code == 200, response.text
+    return {row["user_id"]: row["name"] for row in response.json()}
+
+
+def test_a_name_finds_the_id_it_belongs_to(registered: TestClient) -> None:
+    """The lookup page wants a snowflake, and the snowflake is the part nobody
+    remembers."""
+    relay(registered, "member-join", user_id=LISTED_USER, username="Nuisance")
+
+    assert search(registered, "Nuisance") == {str(LISTED_USER): "Nuisance"}
+
+
+def test_part_of_a_name_is_enough(registered: TestClient) -> None:
+    relay(registered, "member-join", user_id=LISTED_USER, username="Nuisance")
+
+    assert search(registered, "uisan") == {str(LISTED_USER): "Nuisance"}
+
+
+def test_searching_ignores_case(registered: TestClient) -> None:
+    relay(registered, "member-join", user_id=LISTED_USER, username="Nuisance")
+
+    assert search(registered, "NUISANCE") == {str(LISTED_USER): "Nuisance"}
+
+
+def test_two_people_called_the_same_thing_both_come_back(registered: TestClient) -> None:
+    """Names are not keys, and the cache holds one per ID. Choosing between candidates is
+    the reader's job — this route cannot do it for them."""
+    relay(registered, "member-join", user_id=LISTED_USER, username="Nuisance")
+    relay(registered, "member-join", user_id=OUTSIDER, username="Nuisance the second")
+
+    assert search(registered, "Nuisance") == {
+        str(LISTED_USER): "Nuisance",
+        str(OUTSIDER): "Nuisance the second",
+    }
+
+
+def test_matching_nobody_is_an_empty_answer_rather_than_a_404(registered: TestClient) -> None:
+    """A name Timothy has never seen cannot be told apart from one belonging to nobody."""
+    relay(registered, "member-join", user_id=LISTED_USER, username="Nuisance")
+
+    assert search(registered, "somebody else") == {}
+
+
+def test_a_search_is_over_names_and_not_over_ids(registered: TestClient) -> None:
+    """The one box in the UI splits on this: digits go to the lookup, everything else
+    comes here. A snowflake typed here matching nothing is what makes that split safe."""
+    relay(registered, "member-join", user_id=LISTED_USER, username="Nuisance")
+
+    assert search(registered, str(LISTED_USER)) == {}
+
+
+def test_a_name_made_only_of_spaces_matches_nothing(registered: TestClient) -> None:
+    """Otherwise the pattern is `%%`, which is every row there is."""
+    relay(registered, "member-join", user_id=LISTED_USER, username="Nuisance")
+
+    assert search(registered, "   ") == {}
+
+
+def test_a_wildcard_is_searched_for_as_a_character(registered: TestClient) -> None:
+    relay(registered, "member-join", user_id=LISTED_USER, username="alt_account")
+    relay(registered, "member-join", user_id=OUTSIDER, username="altXaccount")
+
+    assert search(registered, "alt_account") == {str(LISTED_USER): "alt_account"}
+
+
+def test_searching_needs_what_resolving_needs(registered: TestClient) -> None:
+    """It discloses nothing a caller could not have by asking about IDs one at a time."""
+    relay(registered, "member-join", user_id=LISTED_USER, username="Nuisance")
+
+    response = registered.get(
+        "/users/search", params={"q": "Nuisance"}, headers=headers(OUTSIDER)
+    )
+
+    assert response.status_code == 403, response.text

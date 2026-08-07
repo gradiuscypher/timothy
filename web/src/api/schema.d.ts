@@ -153,6 +153,12 @@ export interface paths {
          *
          *     Ordered by id, which is also the page cursor. `created_at` is what a human reads but
          *     it is not unique, and a cursor that can repeat a value can skip a row.
+         *
+         *     The search reaches the name cache as well as the row: names are the only handle most
+         *     readers have on a snowflake, and a box that finds a reason but not the person it is
+         *     about would send them to the lookup page and back. An outer join, because a listing
+         *     whose user nobody has ever seen a name for still has to appear — with an inner one a
+         *     pool would quietly shrink to the users Timothy happens to have names for.
          */
         get: operations["list_pool_listings_pools__name__listings_get"];
         put?: never;
@@ -304,6 +310,34 @@ export interface paths {
          *     Timothy has not happened to see.
          */
         get: operations["resolve_names_users_names_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Names
+         * @description Users whose name contains `q`, at most `MAX_MATCHES` of them.
+         *
+         *     A way of reaching the user lookup when the snowflake is the part nobody remembers.
+         *     Finding nobody is an ordinary answer and comes back as an empty list, because a name
+         *     Timothy has never seen is indistinguishable from one that belongs to nobody.
+         *
+         *     Reading this needs what resolving a name needs. It discloses nothing a caller could
+         *     not already have by asking about IDs one at a time; what it saves them is knowing
+         *     which IDs to ask about.
+         */
+        get: operations["search_names_users_search_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2136,7 +2170,7 @@ export interface operations {
                 limit?: number;
                 /** @description Return listings after this id. Omit for the first page. */
                 after_id?: number | null;
-                /** @description Match against the reason, or against the user ID as text. */
+                /** @description Match against the reason, the user ID as text, or the last name Timothy saw for that user. */
                 q?: string | null;
             };
             header?: never;
@@ -2364,6 +2398,41 @@ export interface operations {
             query?: {
                 /** @description A user ID to resolve. Repeat it for each ID on the page. */
                 id?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserNameRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_names_users_search_get: {
+        parameters: {
+            query: {
+                /** @description Part of a name, matched anywhere in it and ignoring case. */
+                q: string;
             };
             header?: never;
             path?: never;
