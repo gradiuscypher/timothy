@@ -22,6 +22,8 @@ from timothy_api import sessions
 from timothy_api.app import create_app
 from timothy_api.db import Database
 from timothy_api.enforcement import (
+    EVERYTHING,
+    Claim,
     Enforcer,
     JobContext,
     NameBackfiller,
@@ -349,17 +351,21 @@ class Enforcement:
 
         return asyncio.run(main())
 
-    def drain(self, *, now: Callable[[], datetime] | None = None) -> int:
+    def drain(
+        self, *, now: Callable[[], datetime] | None = None, claim: Claim = EVERYTHING
+    ) -> int:
         """Run every job that is due, and say how many ran."""
-        return self._run(lambda context: _worker(context, now).drain())
+        return self._run(lambda context: _worker(context, now, claim).drain())
 
-    def run_once(self, *, now: Callable[[], datetime] | None = None) -> bool:
+    def run_once(
+        self, *, now: Callable[[], datetime] | None = None, claim: Claim = EVERYTHING
+    ) -> bool:
         """Run at most one job."""
-        return self._run(lambda context: _worker(context, now).run_once())
+        return self._run(lambda context: _worker(context, now, claim).run_once())
 
-    def recover(self) -> int:
+    def recover(self, *, claim: Claim = EVERYTHING) -> int:
         """Return jobs left `running` by a crash to the queue."""
-        return self._run(lambda context: _worker(context, None).recover())
+        return self._run(lambda context: _worker(context, None, claim).recover())
 
     def sweep(self, *, now: Callable[[], datetime] | None = None) -> int:
         """Queue one round of guild sweeps, and say how many were queued."""
@@ -381,8 +387,18 @@ class Enforcement:
         )
 
 
-def _worker(context: JobContext, now: Callable[[], datetime] | None) -> Worker:
-    return Worker(context, now=now) if now is not None else Worker(context)
+def _worker(
+    context: JobContext, now: Callable[[], datetime] | None, claim: Claim = EVERYTHING
+) -> Worker:
+    """One worker over `claim`'s share of the queue.
+
+    Defaults to the whole queue: most tests here are about what a job *does*, and which
+    of production's two workers would have picked it up is not their subject. The tests
+    that are about the split pass a claim explicitly.
+    """
+    if now is not None:
+        return Worker(context, claim=claim, now=now)
+    return Worker(context, claim=claim)
 
 
 @pytest.fixture

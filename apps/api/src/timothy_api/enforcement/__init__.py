@@ -14,7 +14,9 @@ The pieces, in the order a job passes through them:
   bans Timothy has a recorded outcome for (ADR 0005).
 * :mod:`~timothy_api.enforcement.handlers` — one function per `JobKind`, turning a thin
   payload into the set of (guild, user) questions it implies *now*.
-* :mod:`~timothy_api.enforcement.worker` — claim, dispatch, retry with backoff.
+* :mod:`~timothy_api.enforcement.worker` — claim, dispatch, retry with backoff. Two of
+  them, over one queue, split by kind so an hours-long guild sweep is not in front of the
+  ban for a user who just joined.
 * :mod:`~timothy_api.enforcement.sweep` — the safety net, staggered across guilds.
 * :mod:`~timothy_api.enforcement.backfill` — the daily round of user-name lookups, which
   is not enforcement at all but rides the same queue, worker and pacer (ADR 0017).
@@ -24,9 +26,20 @@ from timothy_api.enforcement.backfill import NameBackfiller
 from timothy_api.enforcement.engine import Enforcer, Run
 from timothy_api.enforcement.selfunbans import SelfUnbans
 from timothy_api.enforcement.sweep import Sweeper
-from timothy_api.enforcement.worker import JobContext, Worker
+from timothy_api.enforcement.worker import (
+    EVERYTHING,
+    REACTIVE,
+    SWEEPS,
+    Claim,
+    JobContext,
+    Worker,
+)
 
 __all__ = [
+    "EVERYTHING",
+    "REACTIVE",
+    "SWEEPS",
+    "Claim",
     "Enforcer",
     "JobContext",
     "NameBackfiller",

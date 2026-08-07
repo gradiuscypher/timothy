@@ -9,15 +9,25 @@ listing reaches is a question about subscriptions at the moment the worker runs.
 The expensive fact is presence. `fetch_member` is a Discord call per user per guild, so
 it is made only when the answer depends on it — `decide()` checks paused and not-listed
 first, and the overwhelmingly common answer is not-listed, which costs no network at all.
+
+It is also the *most frequent* Discord call the backend makes, by a wide margin, and it
+goes through :func:`~timothy_api.enforcement.retry.with_backoff` like every other one.
+It did not, once, and the shape of what went wrong is worth keeping: a fan-out is a
+serial run of thousands of these, and an unretried one meant a single 503 anywhere in a
+sweep — the ordinary weather of a large API — raised out of `gather`, out of the handler,
+and failed the whole job. Hours of work already committed, thrown away and started again
+from the top on a blip that the next attempt half a second later would not have seen.
 """
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from sqlalchemy import distinct, or_, select
 
+from timothy_api.enforcement.retry import with_backoff
 from timothy_core.db.models import (
     EnforcementOutcome,
     Guild,
@@ -35,6 +45,8 @@ from timothy_core.enforcement.decisions import (
 from timothy_core.enums import OutcomeStatus, SubscriptionLevel
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from timothy_core.ports.discord import DiscordPort
@@ -113,6 +125,7 @@ async def gather(
     *,
     guild_id: int,
     user_id: int,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> EnforcementRequest | None:
     """Build the one question about this user in this guild.
 
@@ -123,6 +136,17 @@ async def gather(
     and on not-listed before it ever reads `user_is_present`, so in those two cases the
     field cannot change the answer and resolving it would be a Discord call spent to
     learn nothing.
+
+    Args:
+        session: the database half of the question.
+        discord: the door to the other half.
+        guild_id: the guild being asked about.
+        user_id: the user being asked about.
+        sleep: how to wait between retries, injected so a test does not.
+
+    Raises:
+        DiscordError: presence could not be resolved and retrying did not fix it. The
+            caller decides what that means; see :meth:`~.engine.Enforcer.enforce`.
     """
     guild = await guild_state(session, guild_id)
     if guild is None:
@@ -141,7 +165,9 @@ async def gather(
     if guild.enforcement_paused or not subscribed_listings(draft):
         return draft
 
-    member = await discord.fetch_member(guild_id=guild_id, user_id=user_id)
+    member = await with_backoff(
+        lambda: discord.fetch_member(guild_id=guild_id, user_id=user_id), sleep=sleep
+    )
     return replace(draft, user_is_present=member is not None)
 
 

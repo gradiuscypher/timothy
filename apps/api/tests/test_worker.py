@@ -14,11 +14,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from timothy_api.db import Database
-from timothy_api.enforcement import Enforcer, JobContext, SelfUnbans, Worker
+from timothy_api.enforcement import REACTIVE, SWEEPS, Enforcer, JobContext, SelfUnbans, Worker
 from timothy_api.enforcement.handlers import HANDLERS
 from timothy_api.enforcement.pacing import Pacer
 from timothy_api.jobs import JobKind
 from timothy_api.settings import Settings
+from timothy_core.ports.discord import DiscordUnavailableError
 from timothy_core.ports.fake import FakeDiscord
 
 from .conftest import (
@@ -168,6 +169,122 @@ def test_a_job_dated_forward_is_not_claimed_yet(
 
     assert enforcement.drain() == 1  # only the guild whose turn is now
     assert enforcement.drain(now=lambda: datetime.now(UTC) + timedelta(hours=2)) == 1
+
+
+def test_a_transient_outage_does_not_throw_away_a_fan_out(
+    pool: TestClient, discord: FakeDiscord, enforcement: Enforcement, settings: Settings
+) -> None:
+    """`fetch_member` is the most frequent Discord call Timothy makes, and it was the one
+    call that did not go through `with_backoff`.
+
+    A fan-out is thousands of them in a row, so a single 503 — the ordinary weather of a
+    large API — raised out of `gather` and failed the whole job, discarding hours of work
+    that was already committed. It is retried now, like every other call.
+    """
+    discord.add_member(GUILD, LISTED_USER)
+    pool.post(
+        "/pools/spam/listings",
+        json={"user_id": str(LISTED_USER), "reason": "spam"},
+        headers=headers(POOL_MANAGER),
+    )
+    pool.put(
+        f"/guilds/{GUILD}/subscriptions/spam",
+        json={"level": "ban"},
+        headers=headers(GUILD_ADMIN),
+    )
+    discord.fail(
+        "fetch_member",
+        guild_id=GUILD,
+        user_id=LISTED_USER,
+        error=DiscordUnavailableError("503 Service Unavailable (error code: 0)"),
+        times=2,
+    )
+
+    enforcement.drain()
+
+    assert [job["status"] for job in jobs_of(settings)] == ["done", "done"]
+    assert discord.guilds[GUILD].bans[LISTED_USER]
+
+
+# -- the split between the two workers ---------------------------------------
+
+
+def test_the_sweep_worker_takes_only_sweeps(
+    pool: TestClient, enforcement: Enforcement, settings: Settings
+) -> None:
+    """The whole point of the split: a guild sweep runs for hours, and the reactive
+    worker must be free to ban somebody who just joined while it does."""
+    insert_job(settings, JobKind.ENFORCE_GUILD.value, {"guild_id": GUILD})
+    insert_job(
+        settings, JobKind.ENFORCE_GUILD_USER.value, {"guild_id": GUILD, "user_id": LISTED_USER}
+    )
+
+    assert enforcement.drain(claim=SWEEPS) == 1
+
+    statuses = {job["kind"]: job["status"] for job in jobs_of(settings)}
+    assert statuses[JobKind.ENFORCE_GUILD.value] == "done"
+    assert statuses[JobKind.ENFORCE_GUILD_USER.value] == "pending"
+
+
+def test_the_reactive_worker_leaves_sweeps_alone(
+    pool: TestClient, enforcement: Enforcement, settings: Settings
+) -> None:
+    """The other half of the partition. A sweep queued in front of a join must not hold
+    the reactive worker up — which is exactly what it did before."""
+    insert_job(settings, JobKind.ENFORCE_GUILD.value, {"guild_id": GUILD})
+    insert_job(
+        settings, JobKind.ENFORCE_GUILD_USER.value, {"guild_id": GUILD, "user_id": LISTED_USER}
+    )
+
+    assert enforcement.drain(claim=REACTIVE) == 1
+
+    statuses = {job["kind"]: job["status"] for job in jobs_of(settings)}
+    assert statuses[JobKind.ENFORCE_GUILD.value] == "pending"
+    assert statuses[JobKind.ENFORCE_GUILD_USER.value] == "done"
+
+
+def test_the_two_claims_partition_every_kind() -> None:
+    """Disjoint is what makes claiming safe without a lock; exhaustive is what stops a
+    kind falling down the gap between them and sitting `pending` forever."""
+    for kind in JobKind:
+        assert (kind in SWEEPS.kinds) != _reactive_takes(kind)
+
+
+def test_an_unknown_kind_belongs_to_the_reactive_worker(
+    enforcement: Enforcement, settings: Settings
+) -> None:
+    """A row written by a newer deploy, or by hand. Owned by nobody it would never be
+    claimed, never fail, and never say anything — so it is owned by the worker whose
+    claim is written as an exclusion."""
+    insert_job(settings, "no_such_kind", {})
+
+    assert enforcement.drain(claim=SWEEPS) == 0
+    assert enforcement.drain(claim=REACTIVE) == 1
+
+    assert "no_such_kind" in str(jobs_of(settings)[0]["last_error"])
+
+
+def test_recovery_returns_only_this_worker_s_jobs(
+    pool: TestClient, enforcement: Enforcement, settings: Settings
+) -> None:
+    """Both workers recover at startup, before either has claimed anything. An unscoped
+    recovery would have one of them hand the other's in-flight job back to the queue, and
+    then both would run it."""
+    insert_job(settings, JobKind.ENFORCE_GUILD.value, {"guild_id": GUILD})
+    insert_job(
+        settings, JobKind.ENFORCE_GUILD_USER.value, {"guild_id": GUILD, "user_id": LISTED_USER}
+    )
+    _mark_running(settings)
+
+    assert enforcement.recover(claim=SWEEPS) == 1
+
+    statuses = {job["kind"]: job["status"] for job in jobs_of(settings)}
+    assert statuses[JobKind.ENFORCE_GUILD.value] == "pending"
+    assert statuses[JobKind.ENFORCE_GUILD_USER.value] == "running"
+
+
+def _reactive_takes(kind: JobKind) -> bool:
+    return kind not in REACTIVE.kinds if REACTIVE.inverted else kind in REACTIVE.kinds
 
 
 @pytest.mark.anyio

@@ -27,6 +27,8 @@ from timothy_api.db import Database
 from timothy_api.diagnostics import RefreshQueue
 from timothy_api.discord_adapter import DiscordAdapter
 from timothy_api.enforcement import (
+    REACTIVE,
+    SWEEPS,
     Enforcer,
     JobContext,
     NameBackfiller,
@@ -76,16 +78,18 @@ container up past a deployment.
 
 
 def _start_background(app: FastAPI) -> list[asyncio.Task[None]]:
-    """Put the worker and the two schedulers on the loop.
+    """Put the two workers and the two schedulers on the loop.
 
     Named tasks, so a traceback says which one died.
     """
     worker: Worker = app.state.worker
+    sweep_worker: Worker = app.state.sweep_worker
     sweeper: Sweeper = app.state.sweeper
     backfiller: NameBackfiller = app.state.backfiller
-    log.info("starting enforcement worker, sweep scheduler and name backfill")
+    log.info("starting enforcement workers, sweep scheduler and name backfill")
     return [
         asyncio.create_task(worker.run_forever(), name="timothy-worker"),
+        asyncio.create_task(sweep_worker.run_forever(), name="timothy-sweep-worker"),
         asyncio.create_task(sweeper.run_forever(), name="timothy-sweeper"),
         asyncio.create_task(backfiller.run_forever(), name="timothy-name-backfill"),
     ]
@@ -99,6 +103,7 @@ async def _stop_background(app: FastAPI, tasks: list[asyncio.Task[None]]) -> Non
     See :mod:`timothy_api.enforcement.pacing`.
     """
     app.state.worker.stop()
+    app.state.sweep_worker.stop()
     app.state.sweeper.stop()
     app.state.backfiller.stop()
 
@@ -155,7 +160,10 @@ def create_app(
         app.state.self_unbans = self_unbans
         app.state.refresh_queue = RefreshQueue()
         app.state.enforcer = enforcer
-        app.state.worker = Worker(context)
+        # Two workers over one queue, split by kind (see `enforcement.worker`). A guild
+        # sweep runs for hours; a user who just joined must not wait behind one.
+        app.state.worker = Worker(context, claim=REACTIVE, name="worker")
+        app.state.sweep_worker = Worker(context, claim=SWEEPS, name="sweep-worker")
         app.state.sweeper = Sweeper(database.sessions, resolved)
         app.state.backfiller = NameBackfiller(database.sessions, resolved)
 

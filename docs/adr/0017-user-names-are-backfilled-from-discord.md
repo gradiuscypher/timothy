@@ -28,8 +28,10 @@ decision here, and four constraints are what make it acceptable:
   allowed to reach a decision, and `user_names` is a label table no enforcement code
   imports.
 - **It goes through the worker.** The backfill is a `JobKind`, not a loop of its own, so
-  its lookups are serialised behind the same single worker that issues bans (ADR 0003).
-  A backfill can therefore never race enforcement for Discord's rate limit; it waits.
+  its lookups are serialised behind the same worker that issues bans (ADR 0003). A
+  backfill can therefore never race enforcement for Discord's rate limit; it waits.
+  Specifically the *reactive* worker: the queue was later split in two by kind, and the
+  backfill sits with the enforcement it must not overtake rather than with the sweeps.
 - **It is capped and it is idempotent.** A round looks up at most
   `USERNAME_BACKFILL_BATCH` IDs, and every ID is looked up once ever — including the ones
   Discord has no user for, which are recorded as a NULL name rather than skipped. Without

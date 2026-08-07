@@ -94,7 +94,11 @@ class FakeDiscord:
         self.messages: list[PostedMessage] = []
         self.calls: list[Call] = []
 
-        self._member_failures: dict[tuple[Operation, int, int], DiscordError] = {}
+        self._member_failures: dict[
+            tuple[Operation, int, int], tuple[DiscordError, int | None]
+        ] = {}
+        """The injected failure and how many more calls it has left. `None` is forever."""
+
         self._channel_failures: dict[int, DiscordError] = {}
         self._call_budget: int | None = None
         self._retry_after: float = 1.0
@@ -156,14 +160,22 @@ class FakeDiscord:
         guild_id: int,
         user_id: int,
         error: DiscordError,
+        times: int | None = None,
     ) -> None:
-        """Make one member-scoped call fail, every time, until `clear_failures`.
+        """Make one member-scoped call fail, until `clear_failures` or `times` runs out.
 
         This is the partial-failure lever: fail the ban for one user in a fan-out and
         the rest still land, which is exactly the case enforcement outcomes exist to
         record.
+
+        `times` is the *transient* lever, and it is a different question. A permanent
+        failure is a guild that granted no ban permission — retrying collects the same
+        refusal, and the honest answer is a `failed` outcome. A transient one is a 503
+        from a load balancer, where retrying is the entire answer and the caller is only
+        correct if it does. Without a failure that stops, a test cannot tell the two
+        apart: everything that retries looks identical to everything that gives up.
         """
-        self._member_failures[op, guild_id, user_id] = error
+        self._member_failures[op, guild_id, user_id] = (error, times)
 
     def fail_message(self, channel_id: int, error: DiscordError) -> None:
         """Make posting to one channel fail."""
@@ -288,5 +300,13 @@ class FakeDiscord:
 
     def _raise_if_injected(self, op: Operation, guild_id: int, user_id: int) -> None:
         injected = self._member_failures.get((op, guild_id, user_id))
-        if injected is not None:
-            raise injected
+        if injected is None:
+            return
+        error, remaining = injected
+        if remaining is None:
+            raise error
+        if remaining <= 1:
+            del self._member_failures[op, guild_id, user_id]
+        else:
+            self._member_failures[op, guild_id, user_id] = (error, remaining - 1)
+        raise error

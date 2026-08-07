@@ -22,6 +22,12 @@ real rather than nominal.
   cost is that slow enforcement sweeps share an event loop with API requests; if that
   becomes a problem, the worker loop can be split into a second container running the same
   image against a WAL-mode database.
+- Within that process there are now two worker loops over the one queue, split by job
+  kind: guild sweeps on one, everything else on the other. This is not the second
+  container above and does not change who writes SQLite — it is one event loop, and both
+  workers commit per (guild, user) pair rather than across a fan-out. It exists because a
+  single queue position is the wrong unit of fairness between work that takes hours and
+  work somebody is waiting on. See `timothy_api.enforcement.worker`.
 - Slash commands stop working if the gateway connection drops, where the old HTTPS webhook
   would have survived it.
 - Every authorised action costs a cached Discord permission lookup, inside Discord's

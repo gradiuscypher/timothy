@@ -166,7 +166,9 @@ class Enforcer:
             self._log_pair(guild_id, user_id, "halted")
             return None
 
-        request = await state.gather(session, self.discord, guild_id=guild_id, user_id=user_id)
+        request = await state.gather(
+            session, self.discord, guild_id=guild_id, user_id=user_id, sleep=self.sleep
+        )
         if request is None:
             self._log_pair(guild_id, user_id, "not_in_guild")
             return None
