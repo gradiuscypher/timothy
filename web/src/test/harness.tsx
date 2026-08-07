@@ -20,8 +20,6 @@ import { makeRouter } from "@/router";
  * of that fiction is exactly what a generated client is supposed to keep honest.
  */
 
-export const server = setupServer();
-
 /**
  * Handlers are absolute.
  *
@@ -34,6 +32,14 @@ const pageOrigin = typeof location === "undefined" ? undefined : location.origin
 export const ORIGIN = pageOrigin ?? "http://localhost:3000";
 
 export const apiUrl = (path: string): string => `${ORIGIN}/api${path}`;
+
+export const server = setupServer(
+  // Every screen that lists user IDs asks what they are called, and in most tests the
+  // answer is "nothing known" — the ordinary state of the cache, and the one in which
+  // the ID itself is what gets drawn. A default rather than a line in twenty tests, and
+  // `resetHandlers` puts it back after any test that overrides it with real names.
+  http.get(apiUrl("/users/names"), () => HttpResponse.json([])),
+);
 
 export function mockApi(): void {
   beforeAll(() => server.listen({ onUnhandledRequest: "error" }));

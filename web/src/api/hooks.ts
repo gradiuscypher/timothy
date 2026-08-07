@@ -51,6 +51,7 @@ export const keys = {
   pool: (name: string) => ["pools", name] as const,
   listings: (name: string, q: string) => ["pools", name, "listings", q] as const,
   userListings: (userId: string) => ["users", userId, "listings"] as const,
+  userNames: (ids: string[]) => ["users", "names", ids.join(",")] as const,
   guilds: ["guilds"] as const,
   guild: (id: string) => ["guilds", id] as const,
   subscriptions: (id: string) => ["guilds", id, "subscriptions"] as const,
@@ -202,6 +203,33 @@ export function useUserListings(userId: string): UseQueryResult<Listing[]> {
           params: { path: { user_id: userId } },
         }),
       ),
+  });
+}
+
+/**
+ * The last known name for each of these IDs, as a lookup keyed by ID.
+ *
+ * Every screen here is a list of snowflakes, and a snowflake names nobody. A page hands
+ * over the IDs it is about to draw and gets back the ones Timothy has ever seen a name
+ * for; the rest are absent, and `<UserName>` shows the ID alone for those. That is why
+ * the result is a `Map` rather than a record of `string | null` — there is no value
+ * meaning "never seen", only the absence of one.
+ *
+ * Sorted into the query key so that the same set of IDs in a different render order is
+ * the same query, and one page's rows are fetched once rather than per re-order.
+ */
+export function useUserNames(userIds: string[]): UseQueryResult<Map<string, string>> {
+  const ids = [...new Set(userIds)].sort();
+  return useQuery({
+    queryKey: keys.userNames(ids),
+    enabled: ids.length > 0,
+    // Names change about as often as people rename themselves, which is far less often
+    // than a page is drawn. Nothing here is a decision, so a slightly old one is fine.
+    staleTime: 300_000,
+    queryFn: async () => {
+      const names = unwrap(await api.GET("/users/names", { params: { query: { id: ids } } }));
+      return new Map(names.map((known) => [known.user_id, known.name]));
+    },
   });
 }
 

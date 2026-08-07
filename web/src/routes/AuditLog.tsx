@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { useAuditLog } from "@/api/hooks";
+import { useAuditLog, useUserNames } from "@/api/hooks";
 import {
   ActorRef,
   Button,
@@ -18,6 +18,7 @@ import {
   Table,
   When,
 } from "@/components/ui";
+import { actorIds } from "@/components/actors";
 
 /**
  * The append-only record: who did what, and when.
@@ -66,6 +67,10 @@ export function AuditLog() {
   const [cursors, setCursors] = useState<Array<number | null>>([null]);
   const before = cursors[cursors.length - 1] ?? null;
   const entries = useAuditLog({ action, q }, before);
+  // Only the actors. A target is a free-form string — `pool:spam`, `guild:1:user:2` —
+  // and picking IDs out of it to name would be guessing at what each action's target
+  // means, in the one view where being exact is the point.
+  const names = useUserNames(actorIds((entries.data ?? []).map((entry) => entry.actor)));
 
   const oldest = entries.data?.[entries.data.length - 1]?.id ?? null;
   const hasMore = (entries.data?.length ?? 0) === PAGE_SIZE;
@@ -138,7 +143,7 @@ export function AuditLog() {
                   <When iso={entry.at} />
                 </Cell>
                 <Cell>
-                  <ActorRef actor={entry.actor} />
+                  <ActorRef actor={entry.actor} names={names.data} />
                 </Cell>
                 <Cell className="whitespace-nowrap">{entry.action}</Cell>
                 <Cell className="snowflake">{entry.target ?? "—"}</Cell>

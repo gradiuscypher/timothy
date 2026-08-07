@@ -1,8 +1,9 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { useUserListings } from "@/api/hooks";
+import { useUserListings, useUserNames } from "@/api/hooks";
 import {
+  ActorRef,
   Button,
   Card,
   CardTitle,
@@ -14,10 +15,10 @@ import {
   Loading,
   PageTitle,
   Row,
-  Snowflake,
   Table,
   When,
 } from "@/components/ui";
+import { actorIds } from "@/components/actors";
 
 /**
  * Why a user is listed, across every pool.
@@ -30,6 +31,12 @@ export function UserLookup({ userId }: { userId?: string }) {
   const navigate = useNavigate();
   const [typed, setTyped] = useState(userId ?? "");
   const listings = useUserListings(userId ?? "");
+  // The user being looked up, and whoever listed them. The looked-up ID goes in even when
+  // nothing lists them: the heading names them either way.
+  const names = useUserNames([
+    ...(userId ? [userId] : []),
+    ...actorIds((listings.data ?? []).map((listing) => listing.created_by)),
+  ]);
 
   return (
     <>
@@ -63,7 +70,14 @@ export function UserLookup({ userId }: { userId?: string }) {
       {userId ? (
         <Card>
           <CardTitle>
-            <span className="snowflake">{userId}</span>
+            {names.data?.get(userId) ? (
+              <span className="flex flex-wrap items-baseline gap-2">
+                <span>{names.data.get(userId)}</span>
+                <span className="snowflake text-sm text-surface-muted">{userId}</span>
+              </span>
+            ) : (
+              <span className="snowflake">{userId}</span>
+            )}
           </CardTitle>
           {listings.isPending ? <Loading what="listings" /> : null}
           <ErrorNote error={listings.error} />
@@ -87,7 +101,7 @@ export function UserLookup({ userId }: { userId?: string }) {
                   </Cell>
                   <Cell>{listing.reason}</Cell>
                   <Cell>
-                    <Snowflake id={listing.created_by.replace("user:", "")} />
+                    <ActorRef actor={listing.created_by} names={names.data} />
                   </Cell>
                   <Cell>
                     <When iso={listing.created_at} />

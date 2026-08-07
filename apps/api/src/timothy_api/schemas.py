@@ -18,6 +18,7 @@ from pydantic import (
     WithJsonSchema,
 )
 
+from timothy_api.usernames import MAX_NAME
 from timothy_core.db.models import (
     AuditLogEntry,
     EnforcementOutcome,
@@ -678,6 +679,27 @@ class GatewayEvent(BaseModel):
 
     guild_id: Snowflake
     user_id: Snowflake
+    username: str | None = Field(default=None, max_length=MAX_NAME)
+    """What Discord currently calls the user, if the event carried it.
+
+    Optional, and ignored by every decision this event leads to. It rides along because
+    the gateway already has it and the backend has no other way to learn it (ADR 0003) —
+    see :mod:`timothy_api.usernames`. An older bot that does not send it relays the event
+    exactly as before.
+    """
+
+
+class UserNameRead(BaseModel):
+    """The last name Timothy saw for one user ID.
+
+    Only IDs with a name appear in a resolution, so there is no "unknown" shape here: an
+    ID that is absent from the answer has never been seen, which is a different thing
+    from being called nothing.
+    """
+
+    user_id: Snowflake
+    name: str
+    observed_at: datetime
 
 
 class EventAck(BaseModel):

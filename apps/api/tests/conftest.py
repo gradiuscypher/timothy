@@ -21,7 +21,14 @@ from sqlalchemy import create_engine, text
 from timothy_api import sessions
 from timothy_api.app import create_app
 from timothy_api.db import Database
-from timothy_api.enforcement import Enforcer, JobContext, SelfUnbans, Sweeper, Worker
+from timothy_api.enforcement import (
+    Enforcer,
+    JobContext,
+    NameBackfiller,
+    SelfUnbans,
+    Sweeper,
+    Worker,
+)
 from timothy_api.oauth import DiscordIdentity, OAuthError
 from timothy_api.settings import Settings
 from timothy_core.migrations import sync_url
@@ -366,6 +373,12 @@ class Enforcement:
             return sweeper.schedule_round()
 
         return self._run(round_)
+
+    def backfill(self) -> bool:
+        """Queue one round of user-name lookups, if there is anything to look up."""
+        return self._run(
+            lambda context: NameBackfiller(context.sessions, self.settings).schedule_round()
+        )
 
 
 def _worker(context: JobContext, now: Callable[[], datetime] | None) -> Worker:

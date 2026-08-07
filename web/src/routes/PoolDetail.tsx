@@ -12,8 +12,10 @@ import {
   usePool,
   useSignedIn,
   useUpdatePool,
+  useUserNames,
 } from "@/api/hooks";
 import {
+  ActorRef,
   Badge,
   Button,
   Card,
@@ -27,11 +29,12 @@ import {
   Loading,
   PageTitle,
   Row,
-  Snowflake,
   Table,
   Textarea,
+  UserName,
   When,
 } from "@/components/ui";
+import { actorIds } from "@/components/actors";
 
 const PAGE_SIZE = 50;
 
@@ -85,6 +88,12 @@ function Listings({ name, canManage }: { name: string; canManage: boolean }) {
   const page = cursors[cursors.length - 1] ?? null;
 
   const listings = useListings(name, { q, limit: PAGE_SIZE, afterId: page });
+  // Everybody this page names: the listed users, and whoever listed them. One resolution
+  // for the whole table rather than one per row.
+  const names = useUserNames([
+    ...(listings.data?.listings ?? []).map((listing) => listing.user_id),
+    ...actorIds((listings.data?.listings ?? []).map((listing) => listing.created_by)),
+  ]);
   const remove = useDeleteListing(name);
   const [pending, setPending] = useState<{ userId: string; revert: boolean } | null>(null);
 
@@ -137,11 +146,11 @@ function Listings({ name, canManage }: { name: string; canManage: boolean }) {
           {listings.data.listings.map((listing) => (
             <Row key={listing.id}>
               <Cell>
-                <Snowflake id={listing.user_id} />
+                <UserName id={listing.user_id} name={names.data?.get(listing.user_id)} />
               </Cell>
               <Cell>{listing.reason}</Cell>
               <Cell>
-                <Snowflake id={listing.created_by.replace("user:", "")} />
+                <ActorRef actor={listing.created_by} names={names.data} />
               </Cell>
               <Cell>
                 <When iso={listing.created_at} />

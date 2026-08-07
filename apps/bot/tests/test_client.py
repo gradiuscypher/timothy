@@ -229,23 +229,36 @@ async def test_a_member_joining_is_relayed(bot: TimothyBot, backend: Backend) ->
     backend.replies(202, {"action": "enforcement queued"})
     member = cast("Any", discord.Object(id=LISTED_USER))
     member.guild = discord.Object(id=GUILD)
+    member.global_name = "Nuisance"
+    member.name = "nuisance"
 
     await bot.on_member_join(member)
 
     assert backend.called == ("POST", "/events/member-join")
-    assert backend.sent == {"guild_id": str(GUILD), "user_id": str(LISTED_USER)}
+    assert backend.sent == {
+        "guild_id": str(GUILD),
+        "user_id": str(LISTED_USER),
+        "username": "Nuisance",
+    }
 
 
 @pytest.mark.anyio
 async def test_an_unban_is_relayed(bot: TimothyBot, backend: Backend) -> None:
     backend.replies(202, {"action": "exception created"})
 
-    await bot.on_member_unban(
-        cast("discord.Guild", discord.Object(id=GUILD)),
-        cast("discord.User", discord.Object(id=LISTED_USER)),
-    )
+    user = cast("Any", discord.Object(id=LISTED_USER))
+    user.global_name = None
+    user.name = "nuisance"
+
+    await bot.on_member_unban(cast("discord.Guild", discord.Object(id=GUILD)), user)
 
     assert backend.called == ("POST", "/events/ban-remove")
+    # No `global_name` set on the account, so the handle underneath it is the answer.
+    assert backend.sent == {
+        "guild_id": str(GUILD),
+        "user_id": str(LISTED_USER),
+        "username": "nuisance",
+    }
 
 
 @pytest.mark.anyio

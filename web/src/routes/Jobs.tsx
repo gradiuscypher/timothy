@@ -51,6 +51,7 @@ const JOB_KINDS = [
   ["revert_listing", "Lift bans for a listing"],
   ["revert_pool", "Lift bans for a pool"],
   ["revert_subscription", "Lift bans for a subscription"],
+  ["backfill_user_names", "Look up user names"],
 ] as const;
 
 const PAGE_SIZE = 50;

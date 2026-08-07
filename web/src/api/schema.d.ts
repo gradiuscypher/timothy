@@ -288,6 +288,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/names": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve Names
+         * @description The last known name for each of these IDs, for the ones there is one for.
+         *
+         *     An ID with no name is simply absent from the answer, and the caller shows the ID. A
+         *     missing name is never an error and never a 404: it is the ordinary state of a user
+         *     Timothy has not happened to see.
+         */
+        get: operations["resolve_names_users_names_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/guilds": {
         parameters: {
             query?: never;
@@ -1233,6 +1257,8 @@ export interface components {
             guild_id: string;
             /** User Id */
             user_id: string;
+            /** Username */
+            username?: string | null;
         };
         /**
          * GuildConfigRead
@@ -1737,6 +1763,25 @@ export interface components {
         SubscriptionSet: {
             level: components["schemas"]["SubscriptionLevel"];
         };
+        /**
+         * UserNameRead
+         * @description The last name Timothy saw for one user ID.
+         *
+         *     Only IDs with a name appear in a resolution, so there is no "unknown" shape here: an
+         *     ID that is absent from the answer has never been seen, which is a different thing
+         *     from being called nothing.
+         */
+        UserNameRead: {
+            /** User Id */
+            user_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -2234,6 +2279,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_names_users_names_get: {
+        parameters: {
+            query?: {
+                /** @description A user ID to resolve. Repeat it for each ID on the page. */
+                id?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserNameRead"][];
+                };
             };
             /** @description Validation Error */
             422: {

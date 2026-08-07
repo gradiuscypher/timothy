@@ -27,6 +27,7 @@ from timothy_core.ports.discord import (
     NotFoundError,
     Notice,
     RateLimitedError,
+    User,
 )
 
 
@@ -89,6 +90,14 @@ class RestClient(Protocol):
 
     async def fetch_guild(self, guild_id: int, /) -> discord.Guild:
         """Fetch a guild, with its roles, so permissions can be resolved from it."""
+        ...
+
+    async def fetch_user(self, user_id: int, /) -> discord.User:
+        """Fetch an account by ID, so a bare snowflake can be given a name (ADR 0017).
+
+        The one call here that names no guild. Discord answers it for any ID from a bot
+        token, which is what makes backfilling names possible at all.
+        """
         ...
 
     async def fetch_channel(
@@ -190,6 +199,23 @@ class DiscordAdapter:
             # would make a `POOL_MANAGER_ROLE_IDS` that named the guild admit everybody.
             role_ids=frozenset(role.id for role in member.roles if role.id != guild_id),
         )
+
+    async def fetch_user(self, *, user_id: int) -> User | None:
+        """Look an account up by ID. Absence is an answer, not an error.
+
+        `global_name` is what Discord shows for an account everywhere; the handle beneath
+        it is the fallback for an account that has set none. A member's `display_name` is
+        deliberately not what this returns — that folds in one guild's nickname, and this
+        call names people on pages that span every guild.
+        """
+        client = await self._ready()
+        try:
+            user = await client.fetch_user(user_id)
+        except discord.NotFound:
+            return None
+        except Exception as error:
+            raise translate(error) from error
+        return User(user_id=user.id, name=user.global_name or user.name)
 
     async def guild_permissions(self, *, guild_id: int, user_id: int) -> GuildPermissions:
         """Resolve a member's permissions, roles and ownership already folded in.

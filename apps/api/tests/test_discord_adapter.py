@@ -173,6 +173,9 @@ class StubClient:
         self.fetch_fails = fetch_fails
         self.lookup = lookup
         """What `fetch_channel` finds: a channel, or an exception to raise instead."""
+        self.user: object | Exception | None = None
+        """What `fetch_user` finds: an account, an exception, or nobody. Set by
+        :func:`knowing`, rather than a seventh constructor argument."""
         self.logins = 0
         self.closed = False
 
@@ -194,8 +197,22 @@ class StubClient:
             raise self.lookup
         return self.lookup
 
+    async def fetch_user(self, _user_id: int, /) -> Any:  # noqa: ANN401
+        if isinstance(self.user, Exception):
+            raise self.user
+        if self.user is None:
+            raise discord.NotFound(response(404), "Unknown User")
+        return self.user
+
     def get_partial_messageable(self, _id: int, /) -> Any:  # noqa: ANN401
         return self.channel
+
+
+def knowing(user: object | Exception | None) -> StubClient:
+    """A stand-in whose `fetch_user` finds this account, raises this, or finds nobody."""
+    client = StubClient()
+    client.user = user
+    return client
 
 
 def member(permissions: int = 0, *, role_ids: tuple[int, ...] = ()) -> object:
@@ -299,6 +316,44 @@ async def test_an_absent_member_is_an_answer_not_an_error() -> None:
     """Enforcement is reactive (ADR 0004), so "not here" is the most common result there
     is."""
     assert await adapter(StubClient()).fetch_member(guild_id=GUILD, user_id=USER) is None
+
+
+@pytest.mark.anyio
+async def test_an_account_comes_back_under_its_global_name() -> None:
+    """What Discord shows for an account everywhere — not one guild's nickname, which is
+    what `fetch_member` answers and a different question (ADR 0017)."""
+    client = knowing(SimpleNamespace(id=USER, global_name="Tim", name="gradius"))
+
+    found = await adapter(client).fetch_user(user_id=USER)
+
+    assert found is not None
+    assert found.name == "Tim"
+
+
+@pytest.mark.anyio
+async def test_an_account_without_a_global_name_falls_back_to_the_handle() -> None:
+    """Not everyone has set a display name, and the handle underneath is still a name."""
+    client = knowing(SimpleNamespace(id=USER, global_name=None, name="gradius"))
+
+    found = await adapter(client).fetch_user(user_id=USER)
+
+    assert found is not None
+    assert found.name == "gradius"
+
+
+@pytest.mark.anyio
+async def test_an_account_discord_has_never_heard_of_is_an_answer() -> None:
+    """A deleted account, or an ID typed wrong years ago. Something to record, not a
+    failure to retry."""
+    assert await adapter(StubClient()).fetch_user(user_id=USER) is None
+
+
+@pytest.mark.anyio
+async def test_a_user_lookup_translates_its_failures_too() -> None:
+    client = knowing(http_error(429, retry_after="2.5"))
+
+    with pytest.raises(RateLimitedError):
+        await adapter(client).fetch_user(user_id=USER)
 
 
 @pytest.mark.anyio

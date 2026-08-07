@@ -19,8 +19,10 @@ import {
   useSetNotificationChannel,
   useSetSubscription,
   useSubscriptions,
+  useUserNames,
 } from "@/api/hooks";
 import {
+  ActorRef,
   Badge,
   Banner,
   Button,
@@ -38,8 +40,10 @@ import {
   Select,
   Snowflake,
   Table,
+  UserName,
   When,
 } from "@/components/ui";
+import { actorIds } from "@/components/actors";
 import { useToast } from "@/components/Toast";
 
 /** Everything one server's administrators control, plus what Timothy has done there. */
@@ -287,6 +291,7 @@ const BLOCKER_COPY = {
  */
 function BanFailures({ guildId }: { guildId: string }) {
   const failures = useBanFailures(guildId);
+  const names = useUserNames((failures.data ?? []).map((failure) => failure.user_id));
   const [open, setOpen] = useState<string | null>(null);
 
   return (
@@ -309,7 +314,7 @@ function BanFailures({ guildId }: { guildId: string }) {
             <Fragment key={`${failure.user_id}-${failure.pool_id}`}>
               <Row>
                 <Cell>
-                  <Snowflake id={failure.user_id} />
+                  <UserName id={failure.user_id} name={names.data?.get(failure.user_id)} />
                 </Cell>
                 <Cell>{failure.pool_name ?? <em>deleted pool</em>}</Cell>
                 <Cell className="text-surface-muted">{failure.reason ?? "—"}</Cell>
@@ -572,6 +577,11 @@ function Subscriptions({ guildId }: { guildId: string }) {
 
 function Exceptions({ guildId }: { guildId: string }) {
   const exceptions = useExceptions(guildId);
+  // The excepted, and whoever excepted them — except Timothy, which has no ID to name.
+  const names = useUserNames([
+    ...(exceptions.data ?? []).map((exception) => exception.user_id),
+    ...actorIds((exceptions.data ?? []).map((exception) => exception.created_by)),
+  ]);
   const create = useCreateException(guildId);
   const remove = useDeleteException(guildId);
   const notify = useToast();
@@ -595,15 +605,11 @@ function Exceptions({ guildId }: { guildId: string }) {
           {exceptions.data.map((exception) => (
             <Row key={exception.user_id}>
               <Cell>
-                <Snowflake id={exception.user_id} />
+                <UserName id={exception.user_id} name={names.data?.get(exception.user_id)} />
               </Cell>
               <Cell className="text-surface-muted">{exception.reason ?? "—"}</Cell>
               <Cell>
-                {exception.created_by === "system" ? (
-                  <Badge>Timothy</Badge>
-                ) : (
-                  <Snowflake id={exception.created_by.replace("user:", "")} />
-                )}
+                <ActorRef actor={exception.created_by} names={names.data} />
               </Cell>
               <Cell className="text-right">
                 <Button
@@ -763,6 +769,7 @@ const STATUS_LABEL = {
 function History({ guildId }: { guildId: string }) {
   const [status, setStatus] = useState<OutcomeStatus | "">("");
   const outcomes = useEnforcement(guildId, status);
+  const names = useUserNames((outcomes.data ?? []).map((outcome) => outcome.user_id));
 
   return (
     <Card label="Enforcement history">
@@ -800,7 +807,7 @@ function History({ guildId }: { guildId: string }) {
           {outcomes.data.map((outcome) => (
             <Row key={`${outcome.user_id}-${outcome.pool_id}`}>
               <Cell>
-                <Snowflake id={outcome.user_id} />
+                <UserName id={outcome.user_id} name={names.data?.get(outcome.user_id)} />
               </Cell>
               <Cell>
                 <Badge tone={STATUS_TONE[outcome.status]}>

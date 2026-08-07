@@ -346,6 +346,43 @@ class Session(Base):
     expires_at: Mapped[datetime]
 
 
+class UserName(Base):
+    """What a Discord user was last called, by ID.
+
+    A cache with exactly the standing of :attr:`Guild.name`: it exists so a person
+    reading the web UI recognises whom a row is about, and nothing may decide anything
+    from it. There are no foreign keys because there is no users table — a name may
+    outlive every listing that occasioned it, and knowing what an ID was called costs
+    nothing to keep.
+
+    Rows arrive from the three places a name can be had: a login, a gateway event the bot
+    relays, and the daily backfill that asks Discord about the IDs the first two have
+    never covered (ADR 0017). The first two are free; the backfill is what stops a user
+    listed years ago from staying a bare number forever.
+
+    The global handle, never a guild nickname. A listing bans people everywhere, so
+    naming somebody on a pool page by what one guild calls them would be worse than not
+    naming them at all.
+    """
+
+    __tablename__ = "user_names"
+
+    user_id: Mapped[Snowflake] = mapped_column(primary_key=True, autoincrement=False)
+
+    name: Mapped[str | None] = mapped_column(String(64), default=None)
+    """What the account is called, or NULL for one Discord says does not exist.
+
+    Three states, and the third is the reason this is nullable. No row means nobody has
+    looked; a row with a name means somebody has; a row with NULL means somebody looked
+    and Discord had nobody by that ID — a deleted account, or a number typed wrong years
+    ago. Without that last state the backfill would ask about the same dead IDs every
+    day forever, which is the one way a job that exists to be cheap becomes expensive.
+    """
+
+    observed_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    """When this was last established, whichever of the two answers it is."""
+
+
 class AuditLogEntry(Base):
     """One append-only line: who did what to which thing, and when.
 

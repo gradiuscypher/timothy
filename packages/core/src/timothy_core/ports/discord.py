@@ -1,8 +1,12 @@
 """Everything Timothy needs from Discord, and nothing else.
 
-Six operations, deliberately (ADR 0007). Banning real people is not meaningfully
+Seven operations, deliberately (ADR 0007). Banning real people is not meaningfully
 reversible at the far end, so the surface that can do it is kept narrow enough to read
 in one sitting, and narrow enough for a fake to implement honestly.
+
+Six of the seven are enforcement's. :meth:`DiscordPort.fetch_user` is not: it reads a
+name so the web UI can say whom a row is about, and ADR 0017 records why that was worth
+widening the port for.
 
 Errors are the domain's own. An adapter translates `discord.py`'s exceptions into these,
 so retry and backoff policy can be written once against a stable vocabulary rather than
@@ -41,6 +45,23 @@ class Member:
     not included: it would make every member of the guild hold a configured role whose ID
     happened to be the guild's.
     """
+
+
+@dataclass(frozen=True, slots=True)
+class User:
+    """A Discord account, independent of any guild.
+
+    The one thing here that is not a guild-scoped question, and deliberately thin: a name
+    and the ID it belongs to. Timothy asks for it to label rows in its own UI (ADR 0017),
+    never to decide anything, so nothing else about the account is carried.
+    """
+
+    user_id: int
+    name: str
+    """What Discord shows for the account everywhere: `global_name` where the user has
+    set one, the handle underneath it otherwise. Never a guild nickname — see
+    :attr:`Member.display_name`, which is the guild-scoped answer to a different
+    question."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +194,20 @@ class DiscordPort(Protocol):
 
         Raises:
             NotFoundError: the guild is gone, or Timothy is no longer in it.
+            RateLimitedError: back off and retry.
+            DiscordUnavailableError: transport or 5xx failure.
+        """
+        ...
+
+    async def fetch_user(self, *, user_id: int) -> User | None:
+        """Look an account up by ID, or `None` if Discord has no such user.
+
+        The only operation here that names no guild, and the only one that exists for the
+        UI rather than for enforcement (ADR 0017). Absence is an ordinary answer: an ID
+        migrated in from years ago may belong to a deleted account or to nobody at all,
+        and that is a thing to record rather than a failure to retry.
+
+        Raises:
             RateLimitedError: back off and retry.
             DiscordUnavailableError: transport or 5xx failure.
         """

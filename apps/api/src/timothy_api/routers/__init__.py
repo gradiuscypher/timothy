@@ -15,6 +15,7 @@ from timothy_api.routers import (
     ops,
     pools,
     subscriptions,
+    users,
 )
 
 api = APIRouter()
@@ -24,6 +25,7 @@ the compose healthcheck and the client generator both have to reach them."""
 for router in (
     pools.router,
     listings.router,
+    users.router,
     guilds.router,
     subscriptions.router,
     exceptions.router,

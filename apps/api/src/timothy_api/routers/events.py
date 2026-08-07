@@ -23,7 +23,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
 
-from timothy_api import audit, jobs
+from timothy_api import audit, jobs, usernames
 from timothy_api.deps import Requires, SessionDep
 from timothy_api.enforcement import outcomes, state
 from timothy_api.enforcement.selfunbans import SelfUnbans
@@ -48,6 +48,17 @@ def get_self_unbans(request: Request) -> SelfUnbans:
 SelfUnbansDep = Annotated[SelfUnbans, Depends(get_self_unbans)]
 
 
+async def _remember_name(session: SessionDep, body: GatewayEvent) -> None:
+    """Keep whatever name the event carried, so the UI can stop showing a bare ID.
+
+    A passenger on the transaction the handler was going to commit anyway, and never a
+    reason to commit one it would not have. An event from a bot too old to send a name is
+    handled by there being nothing to remember.
+    """
+    if body.username is not None:
+        await usernames.record(session, user_id=body.user_id, name=body.username)
+
+
 @router.post("/member-join", status_code=status.HTTP_202_ACCEPTED)
 async def member_joined(body: GatewayEvent, _actor: Relay, session: SessionDep) -> EventAck:
     """A user joined a guild. Enforce against them there.
@@ -58,6 +69,7 @@ async def member_joined(body: GatewayEvent, _actor: Relay, session: SessionDep) 
     if await session.get(Guild, body.guild_id) is None:
         return EventAck(action="ignored: not a guild Timothy is in")
 
+    await _remember_name(session, body)
     jobs.enqueue(
         session,
         jobs.JobKind.ENFORCE_GUILD_USER,
@@ -84,7 +96,12 @@ async def ban_removed(
     if await session.get(Guild, body.guild_id) is None:
         return EventAck(action="ignored: not a guild Timothy is in")
 
+    await _remember_name(session, body)
+
     if self_unbans.claim(guild_id=body.guild_id, user_id=body.user_id):
+        # The decision is "do nothing", but the name still arrived and is worth keeping,
+        # so this one early return commits where it used to have nothing to write.
+        await session.commit()
         return EventAck(action="ignored: Timothy's own revert")
 
     await outcomes.clear(

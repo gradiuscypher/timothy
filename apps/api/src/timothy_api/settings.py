@@ -266,10 +266,33 @@ class Settings(BaseSettings):
     Weekly is that with room around it. Measure before lowering it.
     """
 
+    username_backfill_interval: Duration = timedelta(days=1)
+    """How often to queue a batch of user-name lookups (ADR 0017).
+
+    Daily because the backlog is finite and shrinks every round: nothing is added to it
+    except new listings, and those mostly arrive with a name already. A round that finds
+    nothing to do costs one query and no Discord calls at all.
+    """
+
+    username_backfill_batch: int = Field(default=500, gt=0)
+    """How many IDs one round looks up.
+
+    Serial calls at roughly two a second (PLAN.md, "What a sweep costs"), so five hundred
+    is about four minutes of the worker's time.
+
+    The whole backlog is smaller than that framing suggests: the migrated data is 3,076
+    listings, so a week of rounds clears it and the steady state after that is a handful
+    of new listings a day. The cap is not sized to a backlog it is struggling with — it
+    is there so that one round is always a short, interruptible piece of work that a ban
+    is never queued behind. Raising it would finish the first week faster and change
+    nothing afterwards.
+    """
+
     # -- the worker's own machinery ------------------------------------------
 
     workers_enabled: bool = True
-    """Whether the lifespan starts the job worker and the sweep scheduler.
+    """Whether the lifespan starts the job worker, the sweep scheduler and the name
+    backfill scheduler.
 
     On in production — the backend is where enforcement runs (ADR 0003). Off in most
     tests, which drive :meth:`~timothy_api.enforcement.worker.Worker.run_once` directly

@@ -25,7 +25,7 @@ from typing import Annotated
 from fastapi import APIRouter, Cookie, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 
-from timothy_api import deps, sessions
+from timothy_api import deps, sessions, usernames
 from timothy_api.deps import ResolverDep, SessionDep, SettingsDep
 from timothy_api.identity import CallerDep
 from timothy_api.oauth import OAuthError, OAuthPort
@@ -188,6 +188,12 @@ async def callback(
         return _back_to_the_login_page("denied")
 
     token = await sessions.issue(session, identity, lifetime=settings.session_lifetime)
+    # Discord has just told us what this person is called, and the people who sign in are
+    # disproportionately the people named on these pages — the actor on every audit
+    # entry, the author of every listing. Kept beyond the session's own lifetime, because
+    # the ID outlives the login (see `usernames`).
+    await usernames.record(session, user_id=identity.user_id, name=identity.username)
+    await session.commit()
     log.info("signed in user %s", identity.user_id)
 
     response = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)

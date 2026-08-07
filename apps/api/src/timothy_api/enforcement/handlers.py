@@ -14,13 +14,19 @@ interleave with.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
+from timothy_api import usernames
 from timothy_api.enforcement import outcomes, revert, state
 from timothy_api.enforcement.engine import Run
+from timothy_api.enforcement.retry import with_backoff
 from timothy_api.jobs import JobKind
 from timothy_core.db.models import Listing
 from timothy_core.enums import OutcomeStatus
+from timothy_core.ports.discord import DiscordError
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
@@ -143,6 +149,61 @@ async def revert_guild_user(ctx: JobContext, payload: dict[str, int]) -> None:
         await session.commit()
 
 
+# -- names -------------------------------------------------------------------
+
+
+async def backfill_user_names(ctx: JobContext, payload: dict[str, int]) -> None:
+    """Ask Discord what a batch of unnamed user IDs are called (ADR 0017).
+
+    The only handler here that decides nothing and changes nothing at Discord. Everything
+    it writes is a label the UI draws and no code reads.
+
+    Three properties, each of which is the difference between a cheap job and a problem:
+
+    * **Serial, one lookup at a time**, like every other Discord call the worker makes.
+      A batch is a few hundred requests against a global rate limit shared with the bans
+      that matter, and those come first by being on the same single worker.
+    * **A user Discord has never heard of is recorded as such** rather than skipped, so
+      tomorrow's round asks about somebody new instead of the same dead IDs.
+    * **Committed per lookup.** A batch interrupted half way keeps the names it did
+      learn; nothing here is worth holding a SQLite write transaction open for.
+
+    A rate limit or an outage that outlasts :func:`~timothy_api.enforcement.retry`'s
+    backoff ends the batch rather than failing the job. The names already learned are
+    kept, and what is left is picked up by the next round — a backfill is never urgent,
+    and retrying it would only spend more of a budget Discord has just said is empty.
+    """
+    limit = payload.get("limit", ctx.settings.username_backfill_batch)
+    async with ctx.sessions() as session:
+        user_ids = await usernames.without_names(session, limit=limit)
+
+    if not user_ids:
+        return
+
+    found = 0
+    for position, user_id in enumerate(user_ids):
+        try:
+            user = await with_backoff(
+                lambda user_id=user_id: ctx.enforcer.discord.fetch_user(user_id=user_id),
+                sleep=ctx.enforcer.sleep,
+            )
+        except DiscordError:
+            log.warning(
+                "user name backfill stopped after %d of %d lookup(s)", position, len(user_ids)
+            )
+            break
+
+        async with ctx.sessions() as session:
+            if user is None:
+                await usernames.record_missing(session, user_id=user_id)
+            else:
+                found += 1
+                await usernames.record(session, user_id=user_id, name=user.name)
+            await session.commit()
+
+    log.info("user name backfill: %d name(s) from %d lookup(s)", found, len(user_ids))
+
+
 # -- shared shapes -----------------------------------------------------------
 
 
@@ -185,6 +246,7 @@ HANDLERS: dict[JobKind, Handler] = {
     JobKind.REVERT_SUBSCRIPTION: revert_subscription,
     JobKind.REVERT_POOL: revert_pool,
     JobKind.REVERT_GUILD_USER: revert_guild_user,
+    JobKind.BACKFILL_USER_NAMES: backfill_user_names,
 }
 """Every kind has a handler, and the test suite asserts that stays true — an unhandled
 kind would be a job that fails its way to `failed` with a `KeyError` for a reason."""

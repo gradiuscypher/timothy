@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { useGuildConfig, useGuildConfigs } from "@/api/hooks";
+import { useGuildConfig, useGuildConfigs, useUserNames } from "@/api/hooks";
 import {
   ActorRef,
   Badge,
@@ -20,8 +20,10 @@ import {
   Row,
   Snowflake,
   Table,
+  UserName,
   When,
 } from "@/components/ui";
+import { actorIds } from "@/components/actors";
 
 /**
  * Every server's settings, for the person who administers none of them.
@@ -156,6 +158,16 @@ export function OpsGuilds() {
  */
 export function OpsGuild({ guildId }: { guildId: string }) {
   const config = useGuildConfig(guildId);
+  // Everyone this page names, gathered before the early returns below: hooks run in the
+  // same order every render, and `config` is still pending on the first of them.
+  const names = useUserNames([
+    ...(config.data?.exceptions ?? []).flatMap((exception) => [
+      exception.user_id,
+      ...actorIds([exception.created_by]),
+    ]),
+    ...actorIds((config.data?.subscriptions ?? []).map((one) => one.created_by)),
+    ...actorIds([config.data?.notification_channel?.created_by]),
+  ]);
 
   if (config.isPending) return <Loading what="this server" />;
   if (config.isError) return <ErrorNote error={config.error} />;
@@ -210,7 +222,7 @@ export function OpsGuild({ guildId }: { guildId: string }) {
                     </Badge>
                   </Cell>
                   <Cell>
-                    <ActorRef actor={subscription.created_by} />
+                    <ActorRef actor={subscription.created_by} names={names.data} />
                   </Cell>
                   <Cell className="whitespace-nowrap">
                     <When iso={subscription.created_at} />
@@ -240,12 +252,15 @@ export function OpsGuild({ guildId }: { guildId: string }) {
                         params={{ userId: exception.user_id }}
                         className="text-accent hover:underline"
                       >
-                        <Snowflake id={exception.user_id} />
+                        <UserName
+                          id={exception.user_id}
+                          name={names.data?.get(exception.user_id)}
+                        />
                       </Link>
                     </Cell>
                     <Cell className="text-surface-muted">{exception.reason ?? "—"}</Cell>
                     <Cell>
-                      <ActorRef actor={exception.created_by} />
+                      <ActorRef actor={exception.created_by} names={names.data} />
                     </Cell>
                     <Cell className="whitespace-nowrap">
                       <When iso={exception.created_at} />
@@ -273,7 +288,7 @@ export function OpsGuild({ guildId }: { guildId: string }) {
                     <Snowflake id={channel.channel_id} />
                   </Cell>
                   <Cell>
-                    <ActorRef actor={channel.created_by} />
+                    <ActorRef actor={channel.created_by} names={names.data} />
                   </Cell>
                   <Cell className="whitespace-nowrap">
                     <When iso={channel.created_at} />

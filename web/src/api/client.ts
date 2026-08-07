@@ -108,6 +108,7 @@ export type Outcome = components["schemas"]["EnforcementOutcomeRead"];
 export type OutcomeStatus = components["schemas"]["OutcomeStatus"];
 export type AuditEntry = components["schemas"]["AuditLogRead"];
 export type SignedIn = components["schemas"]["SignedInRead"];
+export type UserName = components["schemas"]["UserNameRead"];
 export type OpsOverview = components["schemas"]["OpsOverview"];
 export type ActivityPoint = components["schemas"]["ActivityPoint"];
 export type FailureGroup = components["schemas"]["FailureGroup"];

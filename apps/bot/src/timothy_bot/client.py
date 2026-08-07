@@ -51,6 +51,18 @@ web UI, who should not have to wait out a fifteen-minute round to see whether th
 they just moved fixed it."""
 
 
+def handle(user: discord.abc.User) -> str:
+    """What to call a user everywhere, which is not what one guild calls them.
+
+    `global_name` is the display name Discord shows across the whole platform, and
+    `name` the handle underneath it — either is true wherever the user appears. A
+    `Member`'s `display_name` is deliberately not used: it folds in that guild's
+    nickname, and a listing is enforced in every subscribing guild, so a nickname would
+    label a person on pages that have nothing to do with where they chose it.
+    """
+    return user.global_name or user.name
+
+
 def intents() -> discord.Intents:
     """Guilds for membership of the tree, members for joins, moderation for unbans."""
     wanted = discord.Intents.none()
@@ -236,8 +248,15 @@ class TimothyBot(discord.Client):
 
     async def on_member_join(self, member: discord.Member) -> None:
         """Someone joined a guild Timothy is in."""
-        await relay.member_joined(self.api, guild_id=member.guild.id, user_id=member.id)
+        await relay.member_joined(
+            self.api,
+            guild_id=member.guild.id,
+            user_id=member.id,
+            username=handle(member),
+        )
 
     async def on_member_unban(self, guild: discord.Guild, user: discord.User) -> None:
         """A ban was lifted somewhere Timothy is."""
-        await relay.ban_removed(self.api, guild_id=guild.id, user_id=user.id)
+        await relay.ban_removed(
+            self.api, guild_id=guild.id, user_id=user.id, username=handle(user)
+        )

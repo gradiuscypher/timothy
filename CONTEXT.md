@@ -57,6 +57,21 @@ A guild's declaration that a specific user is never to be banned by Timothy in t
 guild, regardless of which pools list them. Guild-wide, never scoped to one pool.
 _Avoid_: allowlist, whitelist, vouch, override
 
+**Known Name**:
+The last name Discord was seen to use for a user ID, kept so the web UI can say whom a row
+is about. The global handle, never a guild nickname — a listing is enforced everywhere, so
+what one guild calls somebody would be the wrong label on every other page. Nothing decides
+anything from it: it is a label, never a key.
+_Avoid_: username (that is Discord's field), display name, nickname
+
+**Name Backfill**:
+The daily job that asks Discord what the listed, excepted and enforced-against IDs are
+called, for the ones no login or gateway event has ever named (ADR 0017). Capped per round
+and run through the same worker as enforcement, so it can never compete with a ban for
+Discord's rate limit. An ID it asks about and Discord has no user for is recorded as
+looked-at, so it is never asked about again.
+_Avoid_: sync, import, refresh
+
 ### Enforcement
 
 **Sweep**:

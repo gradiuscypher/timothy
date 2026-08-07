@@ -16,11 +16,22 @@ The pieces, in the order a job passes through them:
   payload into the set of (guild, user) questions it implies *now*.
 * :mod:`~timothy_api.enforcement.worker` — claim, dispatch, retry with backoff.
 * :mod:`~timothy_api.enforcement.sweep` — the safety net, staggered across guilds.
+* :mod:`~timothy_api.enforcement.backfill` — the daily round of user-name lookups, which
+  is not enforcement at all but rides the same queue, worker and pacer (ADR 0017).
 """
 
+from timothy_api.enforcement.backfill import NameBackfiller
 from timothy_api.enforcement.engine import Enforcer, Run
 from timothy_api.enforcement.selfunbans import SelfUnbans
 from timothy_api.enforcement.sweep import Sweeper
 from timothy_api.enforcement.worker import JobContext, Worker
 
-__all__ = ["Enforcer", "JobContext", "Run", "SelfUnbans", "Sweeper", "Worker"]
+__all__ = [
+    "Enforcer",
+    "JobContext",
+    "NameBackfiller",
+    "Run",
+    "SelfUnbans",
+    "Sweeper",
+    "Worker",
+]

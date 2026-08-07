@@ -53,6 +53,16 @@ class JobKind(StrEnum):
     """`{guild_id, user_id}` — a guild vouched for someone Timothy had already banned
     there, and asked for that ban back."""
 
+    BACKFILL_USER_NAMES = "backfill_user_names"
+    """`{limit}` — ask Discord what a batch of unnamed user IDs are called (ADR 0017).
+
+    The one kind here that no mutation implies and that changes nothing at Discord: it
+    reads. It is a job rather than a loop of its own so that every Discord call the
+    backend makes still goes through the single worker — which is what keeps a backfill
+    of a few hundred lookups from running alongside a ban fan-out and competing with it
+    for the same rate limit.
+    """
+
 
 def enqueue(session: AsyncSession, kind: JobKind, **payload: int) -> Job:
     """Add one job to the caller's transaction.

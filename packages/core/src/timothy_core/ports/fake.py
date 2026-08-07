@@ -23,12 +23,14 @@ from timothy_core.ports.discord import (
     NotFoundError,
     Notice,
     RateLimitedError,
+    User,
 )
 
 Operation = Literal[
     "ban",
     "unban",
     "fetch_member",
+    "fetch_user",
     "guild_permissions",
     "fetch_channel",
     "post_message",
@@ -84,6 +86,11 @@ class FakeDiscord:
         self.channels: dict[int, Channel] = {}
         """Channel ID to the channel, which carries the guild that owns it."""
 
+        self.users: dict[int, User] = {}
+        """Accounts that exist at all, independent of any guild. An ID absent from here
+        is one Discord has never heard of — a deleted account, or a typo carried in from
+        a migration — which is a state the backfill has to handle honestly."""
+
         self.messages: list[PostedMessage] = []
         self.calls: list[Call] = []
 
@@ -121,6 +128,12 @@ class FakeDiscord:
         guild.members[user_id] = member
         guild.permissions[user_id] = permissions or GuildPermissions.none()
         return member
+
+    def add_user(self, user_id: int, name: str) -> User:
+        """Let an account exist, with a name, in no guild in particular."""
+        user = User(user_id=user_id, name=name)
+        self.users[user_id] = user
+        return user
 
     def add_channel(
         self, channel_id: int, guild_id: int | None, *, postable: bool = True
@@ -204,6 +217,16 @@ class FakeDiscord:
         guild = self._guild(guild_id)
         self._raise_if_injected("fetch_member", guild_id, user_id)
         return guild.members.get(user_id)
+
+    async def fetch_user(self, *, user_id: int) -> User | None:
+        """Look an account up. `None` when no such user exists.
+
+        Names no guild, so there is no `_guild` lookup and no guild-scoped failure to
+        inject: what can go wrong here is a rate limit, and that is the shared budget.
+        """
+        self.calls.append(Call("fetch_user", user_id=user_id))
+        self._spend_call()
+        return self.users.get(user_id)
 
     async def guild_permissions(self, *, guild_id: int, user_id: int) -> GuildPermissions:
         """Resolve permissions. A non-member has none."""

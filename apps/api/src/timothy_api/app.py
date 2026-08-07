@@ -26,7 +26,14 @@ from timothy_api import __version__, errors, routers
 from timothy_api.db import Database
 from timothy_api.diagnostics import RefreshQueue
 from timothy_api.discord_adapter import DiscordAdapter
-from timothy_api.enforcement import Enforcer, JobContext, SelfUnbans, Sweeper, Worker
+from timothy_api.enforcement import (
+    Enforcer,
+    JobContext,
+    NameBackfiller,
+    SelfUnbans,
+    Sweeper,
+    Worker,
+)
 from timothy_api.identity import authenticate
 from timothy_api.oauth import DiscordOAuth, OAuthPort
 from timothy_api.permissions import PermissionResolver
@@ -69,16 +76,18 @@ container up past a deployment.
 
 
 def _start_background(app: FastAPI) -> list[asyncio.Task[None]]:
-    """Put the worker and the sweep scheduler on the loop.
+    """Put the worker and the two schedulers on the loop.
 
     Named tasks, so a traceback says which one died.
     """
     worker: Worker = app.state.worker
     sweeper: Sweeper = app.state.sweeper
-    log.info("starting enforcement worker and sweep scheduler")
+    backfiller: NameBackfiller = app.state.backfiller
+    log.info("starting enforcement worker, sweep scheduler and name backfill")
     return [
         asyncio.create_task(worker.run_forever(), name="timothy-worker"),
         asyncio.create_task(sweeper.run_forever(), name="timothy-sweeper"),
+        asyncio.create_task(backfiller.run_forever(), name="timothy-name-backfill"),
     ]
 
 
@@ -91,6 +100,7 @@ async def _stop_background(app: FastAPI, tasks: list[asyncio.Task[None]]) -> Non
     """
     app.state.worker.stop()
     app.state.sweeper.stop()
+    app.state.backfiller.stop()
 
     _, pending = await asyncio.wait(tasks, timeout=SHUTDOWN_GRACE)
     for task in pending:
@@ -147,6 +157,7 @@ def create_app(
         app.state.enforcer = enforcer
         app.state.worker = Worker(context)
         app.state.sweeper = Sweeper(database.sessions, resolved)
+        app.state.backfiller = NameBackfiller(database.sessions, resolved)
 
         background = _start_background(app) if resolved.workers_enabled else []
         try:

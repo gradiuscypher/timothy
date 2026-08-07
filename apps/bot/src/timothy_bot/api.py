@@ -295,23 +295,39 @@ class Api:
 
     # -- relayed gateway events --------------------------------------------------------
 
-    async def member_joined(self, *, guild_id: int, user_id: int) -> str:
+    async def member_joined(
+        self, *, guild_id: int, user_id: int, username: str | None = None
+    ) -> str:
         """Relay `GUILD_MEMBER_ADD`, and return what the backend decided to do."""
-        return await self._event("/events/member-join", guild_id=guild_id, user_id=user_id)
+        return await self._event(
+            "/events/member-join", guild_id=guild_id, user_id=user_id, username=username
+        )
 
-    async def ban_removed(self, *, guild_id: int, user_id: int) -> str:
+    async def ban_removed(
+        self, *, guild_id: int, user_id: int, username: str | None = None
+    ) -> str:
         """Relay `GUILD_BAN_REMOVE`, and return what the backend decided to do."""
-        return await self._event("/events/ban-remove", guild_id=guild_id, user_id=user_id)
+        return await self._event(
+            "/events/ban-remove", guild_id=guild_id, user_id=user_id, username=username
+        )
 
-    async def _event(self, path: str, *, guild_id: int, user_id: int) -> str:
+    async def _event(
+        self, path: str, *, guild_id: int, user_id: int, username: str | None
+    ) -> str:
         """Post an event and hand back the backend's one-line `action`.
 
         Snowflakes go as strings, as they do everywhere on this API: they are 64-bit, and
         the web UI's JSON parser is not.
+
+        The name rides along because the gateway is the only place that has it: the
+        backend makes no Discord calls of its own for it, and would otherwise show every
+        one of these users as a bare ID forever. It carries no authority and decides
+        nothing — the backend files it under the ID and gets on with the event.
         """
-        acknowledged = await self._request(
-            "POST", path, body={"guild_id": str(guild_id), "user_id": str(user_id)}
-        )
+        body: dict[str, Any] = {"guild_id": str(guild_id), "user_id": str(user_id)}
+        if username is not None:
+            body["username"] = username
+        acknowledged = await self._request("POST", path, body=body)
         return str(acknowledged["action"])
 
 

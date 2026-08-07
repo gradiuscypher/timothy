@@ -531,8 +531,36 @@ export function GuildName({ id, name }: { id: string; name?: string | null }) {
   );
 }
 
-/** `user:123…` or `system`, rendered so Timothy's own actions are visibly not a person. */
-export function ActorRef({ actor }: { actor: string }) {
-  if (actor === "system") return <Badge>Timothy</Badge>;
-  return <Snowflake id={actor.replace("user:", "")} />;
+/**
+ * A person, by what Discord last called them.
+ *
+ * The same arrangement as {@link GuildName} and for the same reasons. The name is a cache
+ * Timothy fills from traffic it already has — a login, a relayed join or unban — so an ID
+ * it has never happened to see has no name, and shows as the ID by itself. The ID stays
+ * visible underneath where there is a name: it is what a moderator pastes into Discord's
+ * search, what every log line says, and what the row is actually keyed by. Two people can
+ * share a display name; nobody shares a snowflake.
+ */
+export function UserName({ id, name }: { id: string; name?: string | null }) {
+  if (!name) return <Snowflake id={id} />;
+  return (
+    <span className="flex flex-col gap-0.5">
+      <span>{name}</span>
+      <Snowflake id={id} className="text-xs text-surface-muted" />
+    </span>
+  );
 }
+
+/**
+ * `user:123…` or `system`, rendered so Timothy's own actions are visibly not a person.
+ *
+ * Takes the whole resolution rather than one name, because an actor may be `system` —
+ * which has no ID and so can have no name — and making every caller unpick that before
+ * it could ask would put the same conditional in five places.
+ */
+export function ActorRef({ actor, names }: { actor: string; names?: Map<string, string> }) {
+  if (actor === "system") return <Badge>Timothy</Badge>;
+  const id = actor.replace("user:", "");
+  return <UserName id={id} name={names?.get(id)} />;
+}
+

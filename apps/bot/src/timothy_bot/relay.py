@@ -19,20 +19,29 @@ from timothy_bot.api import Api, ApiError
 log = logging.getLogger(__name__)
 
 
-async def member_joined(api: Api, *, guild_id: int, user_id: int) -> None:
-    """A user turned up in a guild. Enforcement is reactive, so this is the moment."""
+async def member_joined(
+    api: Api, *, guild_id: int, user_id: int, username: str | None = None
+) -> None:
+    """A user turned up in a guild. Enforcement is reactive, so this is the moment.
+
+    The name goes with it for the same reason a guild's does — the gateway has it and the
+    backend has no cheap way to ask — and for nothing else: no decision here or there
+    reads it.
+    """
     try:
-        action = await api.member_joined(guild_id=guild_id, user_id=user_id)
+        action = await api.member_joined(guild_id=guild_id, user_id=user_id, username=username)
     except ApiError as error:
         log.warning("member join %s in %s not relayed: %s", user_id, guild_id, error.detail)
         return
     log.info("member join %s in %s: %s", user_id, guild_id, action)
 
 
-async def ban_removed(api: Api, *, guild_id: int, user_id: int) -> None:
+async def ban_removed(
+    api: Api, *, guild_id: int, user_id: int, username: str | None = None
+) -> None:
     """A ban was lifted in a guild. The backend decides whether it should stick."""
     try:
-        action = await api.ban_removed(guild_id=guild_id, user_id=user_id)
+        action = await api.ban_removed(guild_id=guild_id, user_id=user_id, username=username)
     except ApiError as error:
         log.warning("unban %s in %s not relayed: %s", user_id, guild_id, error.detail)
         return
