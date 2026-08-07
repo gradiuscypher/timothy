@@ -70,6 +70,7 @@ classes are compatible, so `shadcn add` later drops in over the top rather than 
 | `DRY_RUN` | `true` | Fails safe — unparseable means on. |
 | `ENFORCEMENT_BURST_LIMIT` | `25` | Bans in one guild in one run before the breaker trips. Runtime-adjustable, not a redeploy. |
 | `SWEEP_INTERVAL` | `7d` | Must be longer than a round takes, and a round is one member lookup per listed user per subscribed guild, issued serially. This was `1h` on the reasoning that "an hour of exposure is tolerable and a day is not" — right about the tolerance, wrong about the arithmetic. See below. |
+| `USERNAME_BACKFILL_INTERVAL` / `_BATCH` | `1d` / `500` | Looking up the names of user IDs no login or gateway event has ever named (ADR 0017). The batch keeps one round short enough that a ban is never queued behind it; the backlog is 3,076 listings, so a week of rounds clears it. |
 | `PERMISSION_CACHE_TTL` | `60s` | |
 | `DISCORD_CLIENT_ID` / `_SECRET` | — | The web UI's OAuth login. Unset closes login (503) rather than opening anything. |
 | `PUBLIC_BASE_URL` | — | Where a browser reaches Timothy. The redirect URI is `<this>/api/auth/callback` and Discord matches it exactly. |

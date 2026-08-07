@@ -169,6 +169,11 @@ services:
       # read the same variable so they cannot drift apart.
       TIMOTHY_DIAGNOSTICS_INTERVAL: ${TIMOTHY_DIAGNOSTICS_INTERVAL:-900}
       TIMOTHY_ENFORCEMENT_BURST_LIMIT: ${TIMOTHY_ENFORCEMENT_BURST_LIMIT:-25}
+      # How often to look up the names of user IDs nothing has named, and how many per
+      # round (ADR 0017). The batch is what keeps one round short enough that a ban is
+      # never queued behind it; raising it only finishes the initial backlog sooner.
+      TIMOTHY_USERNAME_BACKFILL_INTERVAL: ${TIMOTHY_USERNAME_BACKFILL_INTERVAL:-86400}
+      TIMOTHY_USERNAME_BACKFILL_BATCH: ${TIMOTHY_USERNAME_BACKFILL_BATCH:-500}
       TIMOTHY_WORKERS_ENABLED: ${TIMOTHY_WORKERS_ENABLED:-true}
       TIMOTHY_JOB_POLL_INTERVAL: ${TIMOTHY_JOB_POLL_INTERVAL:-1}
       TIMOTHY_JOB_MAX_ATTEMPTS: ${TIMOTHY_JOB_MAX_ATTEMPTS:-5}
