@@ -40,3 +40,12 @@ class JobStatus(StrEnum):
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
+
+    CANCELLED = "cancelled"
+    """Dropped by an operator before it ran.
+
+    Distinct from `failed` on purpose, and the distinction is worth a column value: the
+    operations view counts failures as a health signal, and a job somebody deliberately
+    dropped is not a thing going wrong. Terminal like `done` and `failed` — the worker
+    never claims one, and nothing puts a job back into it.
+    """

@@ -22,7 +22,6 @@ from .conftest import (
     POOL_MANAGER,
     Enforcement,
     headers,
-    insert_job,
     jobs_of,
 )
 
@@ -158,19 +157,33 @@ def test_a_batch_covers_several_users_in_one_job(
 
 
 def test_a_round_is_capped_and_the_rest_waits_for_the_next(
-    listed: TestClient,
-    enforcement: Enforcement,
-    discord: FakeDiscord,
-    settings: Settings,
+    listed: TestClient, enforcement: Enforcement, discord: FakeDiscord
 ) -> None:
-    """The cap is what keeps a migrated backlog from becoming one enormous job. The
-    limit rides on the payload, so the number in force is the one the round was queued
-    with rather than whatever the setting says when it runs."""
+    """The cap is what keeps one round short enough that a ban is never queued behind
+    it."""
     list_user(listed, OTHER_USER)
     discord.add_user(LISTED_USER, "One")
     discord.add_user(OTHER_USER, "Two")
-    insert_job(settings, BACKFILL, {"limit": 1})
 
+    enforcement.backfill()
+    enforcement.drain()
+
+    assert len(discord.calls_of("fetch_user")) == 2
+
+
+@pytest.mark.parametrize("settings_overrides", [{"username_backfill_batch": 1}])
+def test_the_batch_in_force_is_the_one_set_when_the_round_runs(
+    listed: TestClient, enforcement: Enforcement, discord: FakeDiscord
+) -> None:
+    """The payload carries nothing, so an operator who changes the batch and restarts is
+    obeyed by the round already sitting in the queue — not only by the next one to be
+    queued. Waiting a full interval to find out whether a setting took is the kind of
+    thing nobody would ever test by hand."""
+    list_user(listed, OTHER_USER)
+    discord.add_user(LISTED_USER, "One")
+    discord.add_user(OTHER_USER, "Two")
+
+    enforcement.backfill()
     enforcement.drain()
 
     assert len(discord.calls_of("fetch_user")) == 1

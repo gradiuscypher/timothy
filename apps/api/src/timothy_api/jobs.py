@@ -54,7 +54,13 @@ class JobKind(StrEnum):
     there, and asked for that ban back."""
 
     BACKFILL_USER_NAMES = "backfill_user_names"
-    """`{limit}` — ask Discord what a batch of unnamed user IDs are called (ADR 0017).
+    """`{}` — ask Discord what a batch of unnamed user IDs are called (ADR 0017).
+
+    Carries nothing at all, which is this module's own rule taken to its end: who needs a
+    name is a question about the listings as they stand when the round *runs*, and how
+    many to ask about in one go is a setting that may have changed since it was queued.
+    Baking either in would mean a round queued last night ignoring the batch size an
+    operator set this morning.
 
     The one kind here that no mutation implies and that changes nothing at Discord: it
     reads. It is a job rather than a loop of its own so that every Discord call the

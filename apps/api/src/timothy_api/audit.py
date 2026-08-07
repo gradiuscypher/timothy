@@ -47,6 +47,14 @@ class AuditAction(StrEnum):
     ENFORCEMENT_REVERT = "enforcement.revert"
     ENFORCEMENT_BREAKER_TRIPPED = "enforcement.breaker_tripped"
 
+    JOB_RUN_NOW = "job.run_now"
+    """An operator pulled a queued job forward to run at once."""
+
+    JOB_CANCEL = "job.cancel"
+    """An operator dropped a queued job. Recorded because it is the one way work Timothy
+    had decided to do stops happening without anybody being told — the sweep would have
+    swept, and now it will not until the next round."""
+
     ENFORCEMENT_DRY_RUN = "enforcement.dry_run"
     """What Timothy *would* have done. In dry run this is the only record there is — the
     durable `enforcement_outcomes` stay empty, because an outcome is an attribution
@@ -71,6 +79,11 @@ def guild_target(guild_id: int) -> str:
 def guild_user_target(*, guild_id: int, user_id: int) -> str:
     """`guild:<id>/user:<id>` — for the things scoped to one user in one guild."""
     return f"guild:{guild_id}/user:{user_id}"
+
+
+def job_target(job_id: int) -> str:
+    """`job:<id>` — the queue row an operator acted on."""
+    return f"job:{job_id}"
 
 
 def guild_pool_target(*, guild_id: int, pool_name: str) -> str:

@@ -152,8 +152,12 @@ async def revert_guild_user(ctx: JobContext, payload: dict[str, int]) -> None:
 # -- names -------------------------------------------------------------------
 
 
-async def backfill_user_names(ctx: JobContext, payload: dict[str, int]) -> None:
+async def backfill_user_names(ctx: JobContext, _payload: dict[str, int]) -> None:
     """Ask Discord what a batch of unnamed user IDs are called (ADR 0017).
+
+    Takes nothing from the payload, including the batch size: an operator who lowers
+    `USERNAME_BACKFILL_BATCH` and restarts expects the next round *to run* to obey it,
+    not the next one to be queued.
 
     The only handler here that decides nothing and changes nothing at Discord. Everything
     it writes is a label the UI draws and no code reads.
@@ -173,7 +177,7 @@ async def backfill_user_names(ctx: JobContext, payload: dict[str, int]) -> None:
     kept, and what is left is picked up by the next round — a backfill is never urgent,
     and retrying it would only spend more of a budget Discord has just said is empty.
     """
-    limit = payload.get("limit", ctx.settings.username_backfill_batch)
+    limit = ctx.settings.username_backfill_batch
     async with ctx.sessions() as session:
         user_ids = await usernames.without_names(session, limit=limit)
 

@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx2
+import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
@@ -699,3 +700,108 @@ def test_reading_a_guilds_settings_costs_no_discord_call(
     _config(pool)
 
     assert discord.calls == []
+
+
+# -- acting on the queue -----------------------------------------------------
+
+
+def queued(client: TestClient) -> list[dict[str, Any]]:
+    return list(client.get("/ops/jobs?status=pending", headers=headers(OWNER)).json())
+
+
+@pytest.fixture
+def job(pool: TestClient) -> tuple[TestClient, int]:
+    """A pool with one listing, and therefore one pending enforcement job."""
+    pool.post(
+        "/pools/spam/listings",
+        json={"user_id": str(LISTED_USER), "reason": "raiding"},
+        headers=headers(POOL_MANAGER),
+    )
+    return pool, queued(pool)[0]["id"]
+
+
+def test_running_a_job_now_moves_only_its_schedule(job: tuple[TestClient, int]) -> None:
+    """The payload is left alone on purpose: a rescheduled round reads the settings and
+    the listings as they stand when it runs, not as they stood when it was queued."""
+    client, job_id = job
+    before = queued(client)[0]
+
+    response = client.post(f"/ops/jobs/{job_id}/run-now", headers=headers(OWNER))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["payload"] == before["payload"]
+    assert response.json()["run_after"] <= datetime.now(UTC).isoformat()
+
+
+def test_a_job_dated_forward_becomes_due(pool: TestClient, enforcement: Enforcement) -> None:
+    """The case this exists for: a sweep round staggered days out that an operator wants
+    now rather than on Thursday."""
+    enforcement.sweep()
+    later = next(row for row in queued(pool) if row["kind"] == "enforce_guild")
+    assert enforcement.drain() <= 1  # the one whose turn is already now
+
+    pool.post(f"/ops/jobs/{later['id']}/run-now", headers=headers(OWNER))
+
+    assert enforcement.drain() >= 1
+
+
+def test_cancelling_a_job_stops_it_running(job: tuple[TestClient, int]) -> None:
+    client, job_id = job
+
+    response = client.post(f"/ops/jobs/{job_id}/cancel", headers=headers(OWNER))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "cancelled"
+    assert queued(client) == []
+
+
+def test_a_cancelled_job_is_not_counted_as_a_failure(
+    job: tuple[TestClient, int],
+) -> None:
+    """`/ops` counts failures as a health signal, and work somebody deliberately dropped
+    is not a thing going wrong."""
+    client, job_id = job
+    client.post(f"/ops/jobs/{job_id}/cancel", headers=headers(OWNER))
+
+    queue = client.get("/ops/overview", headers=headers(OWNER)).json()["queue"]
+
+    assert queue["failed"] == 0
+    assert queue["pending"] == 0
+
+
+def test_a_cancelled_job_is_never_claimed(
+    job: tuple[TestClient, int], enforcement: Enforcement, discord: FakeDiscord
+) -> None:
+    client, job_id = job
+    client.post(f"/ops/jobs/{job_id}/cancel", headers=headers(OWNER))
+    discord.calls.clear()
+
+    assert enforcement.drain() == 0
+    assert discord.calls == []
+
+
+def test_a_finished_job_can_be_neither_moved_nor_cancelled(
+    job: tuple[TestClient, int], enforcement: Enforcement
+) -> None:
+    """Both would be a lie about what is going to happen: the work is already done."""
+    client, job_id = job
+    enforcement.drain()
+
+    for action in ("run-now", "cancel"):
+        response = client.post(f"/ops/jobs/{job_id}/{action}", headers=headers(OWNER))
+        assert response.status_code == 409, action
+
+
+def test_a_job_that_does_not_exist_is_a_404(pool: TestClient) -> None:
+    assert pool.post("/ops/jobs/9999/cancel", headers=headers(OWNER)).status_code == 404
+
+
+def test_only_the_owner_may_touch_the_queue(job: tuple[TestClient, int]) -> None:
+    """Deciding when Timothy's own work runs is the job `OWNER_IDS` names — not the
+    people who curate the pools, and not a guild's administrators."""
+    client, job_id = job
+
+    for actor in (POOL_MANAGER, GUILD_ADMIN, MEMBER):
+        for action in ("run-now", "cancel"):
+            response = client.post(f"/ops/jobs/{job_id}/{action}", headers=headers(actor))
+            assert response.status_code == 403, f"{actor} {action}"

@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { JobStatus } from "@/api/client";
-import { useOpsJobs } from "@/api/hooks";
+import { useJobAction, useOpsJobs } from "@/api/hooks";
 import {
   Badge,
   Button,
   Card,
   Cell,
+  Confirm,
   Empty,
   ErrorNote,
   Field,
@@ -19,6 +20,7 @@ import {
   Table,
   When,
 } from "@/components/ui";
+import { useToast } from "@/components/Toast";
 
 /**
  * The queue itself, row by row.
@@ -40,6 +42,7 @@ const JOB_STATUSES: Array<[JobStatus | "", string]> = [
   ["running", "Running"],
   ["done", "Done"],
   ["failed", "Abandoned"],
+  ["cancelled", "Cancelled"],
 ];
 
 const JOB_KINDS = [
@@ -54,6 +57,52 @@ const JOB_KINDS = [
   ["backfill_user_names", "Look up user names"],
 ] as const;
 
+const TICK_MS = 30_000;
+
+/**
+ * The current time, as state rather than as a call during render.
+ *
+ * `Date.now()` in a render is impure — the same props would draw differently on a
+ * re-render nobody asked for — and the lint rules say so. Holding it in state fixes that
+ * and pays for itself: "in 2m" counts down on its own while an operator watches, which is
+ * exactly what somebody staring at a queue wants it to do.
+ */
+function useNow(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), TICK_MS);
+    return () => clearInterval(timer);
+  }, []);
+  return now;
+}
+
+/**
+ * A job's schedule, said in the terms an operator is actually asking about.
+ *
+ * "Due now" and "in 3d" are the same column and opposite situations: the first means the
+ * queue is behind, the second means the sweep is staggered exactly as designed. A bare
+ * timestamp makes the reader do that subtraction on every row, which is how a perfectly
+ * healthy queue gets read as a stuck one.
+ */
+function Due({ iso, status, now }: { iso: string; status: JobStatus; now: number }) {
+  const at = new Date(iso);
+  if (status !== "pending") return <When iso={iso} />;
+
+  const seconds = (at.getTime() - now) / 1000;
+  return (
+    <span title={at.toISOString()} className="whitespace-nowrap">
+      {seconds <= 0 ? "due now" : <span className="text-surface-muted">in {delay(seconds)}</span>}
+    </span>
+  );
+}
+
+function delay(seconds: number): string {
+  if (seconds < 90) return `${Math.round(seconds)}s`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)}m`;
+  if (seconds < 172800) return `${Math.round(seconds / 3600)}h`;
+  return `${Math.round(seconds / 86400)}d`;
+}
+
 const PAGE_SIZE = 50;
 
 export function Jobs() {
@@ -63,6 +112,11 @@ export function Jobs() {
   const [cursors, setCursors] = useState<Array<number | null>>([null]);
   const before = cursors[cursors.length - 1] ?? null;
   const jobs = useOpsJobs({ status, kind, q }, before);
+  const runNow = useJobAction("run-now");
+  const cancel = useJobAction("cancel");
+  const notify = useToast();
+  const [pending, setPending] = useState<number | null>(null);
+  const now = useNow();
 
   const oldest = jobs.data?.[jobs.data.length - 1]?.id ?? null;
   const hasMore = (jobs.data?.length ?? 0) === PAGE_SIZE;
@@ -127,14 +181,16 @@ export function Jobs() {
       </FilterBar>
 
       <Card label="Jobs">
-        <ErrorNote error={jobs.error} />
+        <ErrorNote error={jobs.error ?? runNow.error ?? cancel.error} />
         {jobs.isPending ? <Loading what="jobs" /> : null}
         {jobs.data?.length === 0 ? (
           <Empty>{filtered ? "No jobs match those filters." : "The queue is empty."}</Empty>
         ) : null}
 
         {jobs.data?.length ? (
-          <Table head={["Kind", "Status", "Tries", "About", "Created", "Last error"]}>
+          <Table
+            head={["Kind", "Status", "Tries", "About", "Runs", "Created", "Last error", ""]}
+          >
             {jobs.data.map((job) => (
               <Row key={job.id}>
                 <Cell className="whitespace-nowrap">{job.kind}</Cell>
@@ -153,10 +209,39 @@ export function Jobs() {
                     {JSON.stringify(job.payload)}
                   </code>
                 </Cell>
+                <Cell>
+                  <Due iso={job.run_after} status={job.status} now={now} />
+                </Cell>
                 <Cell className="whitespace-nowrap">
                   <When iso={job.created_at} />
                 </Cell>
                 <Cell className="text-danger">{job.last_error ?? ""}</Cell>
+                <Cell className="text-right whitespace-nowrap">
+                  {job.status === "pending" ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={runNow.isPending}
+                        onClick={() =>
+                          runNow.mutate(job.id, {
+                            onSuccess: () => notify("Job moved to the front of the queue."),
+                          })
+                        }
+                      >
+                        Run now
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={cancel.isPending}
+                        onClick={() => setPending(job.id)}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  ) : null}
+                </Cell>
               </Row>
             ))}
           </Table>
@@ -180,11 +265,39 @@ export function Jobs() {
         </div>
 
         <p className="mt-3 text-xs text-surface-muted">
-          There is deliberately no retry here. A job is only abandoned after exhausting its
-          attempts on something running it again would not fix — an unknown kind, or a
-          payload missing what its handler needs. The failures worth retrying are recorded
-          against the server instead, and the sweep picks those up on its own.
+          A waiting job can be brought forward or dropped. There is still no retry for an
+          abandoned one: a job is only abandoned after exhausting its attempts on something
+          running it again would not fix — an unknown kind, or a payload missing what its
+          handler needs. The failures worth retrying are recorded against the server
+          instead, and the sweep picks those up on its own.
         </p>
+
+        <Confirm
+          open={pending !== null}
+          title="Drop this job?"
+          body={
+            <>
+              <p>
+                It will not run, and nothing puts it back. Whatever queued it will queue it
+                again in its own time — the next sweep round, the next backfill round, or
+                the next change that implies it.
+              </p>
+              <p>Work already done is untouched. This only stops what had not started.</p>
+            </>
+          }
+          confirmLabel="Drop it"
+          busy={cancel.isPending}
+          onCancel={() => setPending(null)}
+          onConfirm={() => {
+            if (pending === null) return;
+            cancel.mutate(pending, {
+              onSuccess: () => {
+                notify("Job cancelled.");
+                setPending(null);
+              },
+            });
+          }}
+        />
       </Card>
     </>
   );

@@ -20,13 +20,13 @@ def test_upgrade_records_the_revision(sync_engine: Engine) -> None:
     """pysqlite only opens a transaction for DML, so the stamp is easy to lose while the
     tables themselves land — leaving Alembic convinced nothing has ever been applied."""
     with sync_engine.connect() as connection:
-        assert MigrationContext.configure(connection).get_current_revision() == "0007"
+        assert MigrationContext.configure(connection).get_current_revision() == "0008"
 
 
 def test_there_is_exactly_one_head(sync_engine: Engine) -> None:
     """Two heads means two people generated a revision from the same parent."""
     with sync_engine.connect() as connection:
-        assert MigrationContext.configure(connection).get_current_heads() == ("0007",)
+        assert MigrationContext.configure(connection).get_current_heads() == ("0008",)
 
 
 def test_downgrade_leaves_nothing_behind(database_url: str, sync_engine: Engine) -> None:

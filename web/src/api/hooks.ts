@@ -666,6 +666,32 @@ export function useOpsJobs(
 }
 
 /**
+ * Reschedule a queued job to run at once, or drop it.
+ *
+ * The only two mutations under `/ops`, and the only ones in this file that invalidate a
+ * query rather than a screen's worth of them: what they change is one row of the queue,
+ * and the queue is the only thing showing it. The overview goes too, because its depth
+ * tiles counted the job that just stopped being pending.
+ */
+export function useJobAction(
+  action: "run-now" | "cancel",
+): UseMutationResult<Job, Error, number> {
+  const cache = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId) =>
+      unwrap(
+        await api.POST(`/ops/jobs/{job_id}/${action}` as "/ops/jobs/{job_id}/cancel", {
+          params: { path: { job_id: jobId } },
+        }),
+      ),
+    onSuccess: () => {
+      void cache.invalidateQueries({ queryKey: ["ops", "jobs"] });
+      void cache.invalidateQueries({ queryKey: ["ops", "overview"] });
+    },
+  });
+}
+
+/**
  * Every server's configuration, whoever is signed in.
  *
  * `useMyGuilds` is the same question asked of `/guilds`, and it answers with the caller's

@@ -15,6 +15,7 @@ from .conftest import (
     GUILD_ADMIN,
     LISTED_USER,
     MEMBER,
+    OWNER,
     POOL_MANAGER,
     headers,
 )
@@ -86,6 +87,12 @@ def test_every_mutation_leaves_a_line(pool: TestClient) -> None:
     pool.delete(f"/guilds/{GUILD}/subscriptions/spam", headers=headers(GUILD_ADMIN))
     pool.delete("/pools/spam", headers=headers(POOL_MANAGER))
     pool.delete(f"/guilds/{GUILD}", headers=headers("system"))
+
+    # The listing above queued enforcement, so there are jobs to act on. Two of them,
+    # because run-now and cancel each need one that is still pending.
+    queued = pool.get("/ops/jobs?status=pending", headers=headers(OWNER)).json()
+    pool.post(f"/ops/jobs/{queued[0]['id']}/run-now", headers=headers(OWNER))
+    pool.post(f"/ops/jobs/{queued[1]['id']}/cancel", headers=headers(OWNER))
 
     assert set(actions(pool)) == {action.value for action in AuditAction} - ENFORCEMENT_ACTIONS
 

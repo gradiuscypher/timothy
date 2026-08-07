@@ -289,13 +289,14 @@ describe("the job list", () => {
     expect(within(card).getByText("failed")).toBeInTheDocument();
   });
 
-  it("explains why there is no retry button", async () => {
-    // Retrying an abandoned job reliably does nothing — the failures worth retrying are
-    // recorded against the server and picked up by the sweep.
+  it("explains why an abandoned job still has no retry button", async () => {
+    // Bringing a *waiting* job forward is a different thing and is offered. Retrying an
+    // abandoned one reliably does nothing — the failures worth retrying are recorded
+    // against the server and picked up by the sweep.
     jobsScreen();
 
     const card = await screen.findByRole("region", { name: "Jobs" });
-    expect(within(card).getByText(/deliberately no retry here/)).toBeInTheDocument();
+    expect(within(card).getByText(/still no retry for an\s+abandoned one/)).toBeInTheDocument();
     expect(
       within(card).queryByRole("button", { name: /retry/i }),
     ).not.toBeInTheDocument();
@@ -535,5 +536,95 @@ describe("every server's settings", () => {
     await screen.findByText(/subscribes to nothing/);
 
     expect(screen.queryByRole("button", { name: /Pause|Resume|Save|Remove/ })).toBeNull();
+  });
+});
+
+describe("acting on a queued job", () => {
+  const WAITING = {
+    id: 11,
+    kind: "backfill_user_names",
+    payload: {},
+    run_after: "2026-08-14T00:00:00Z",
+    attempts: 0,
+    status: "pending",
+    last_error: null,
+    created_at: "2026-08-07T00:00:00Z",
+  };
+
+  /** A queue holding one job, and a record of what was posted about it. */
+  function withJob(job: Record<string, unknown> = {}) {
+    const posted: string[] = [];
+    const row = { ...WAITING, ...job };
+    server.use(
+      get("/auth/me", OWNER),
+      get("/ops/jobs", [row] as never),
+      http.post(apiUrl("/ops/jobs/11/run-now"), () => {
+        posted.push("run-now");
+        return HttpResponse.json({ ...row, run_after: "2026-08-07T00:00:00Z" });
+      }),
+      http.post(apiUrl("/ops/jobs/11/cancel"), () => {
+        posted.push("cancel");
+        return HttpResponse.json({ ...row, status: "cancelled" });
+      }),
+    );
+    return { posted, ...renderApp("/ops/jobs") };
+  }
+
+  it("says how long until a waiting job runs, rather than when", async () => {
+    // A staggered sweep round is *supposed* to sit days out. A bare timestamp makes the
+    // reader subtract on every row, which is how a healthy queue reads as a stuck one.
+    withJob({ run_after: new Date(Date.now() + 3 * 86_400_000).toISOString() });
+
+    const card = await screen.findByRole("region", { name: "Jobs" });
+    expect(await within(card).findByText("in 3d")).toBeInTheDocument();
+  });
+
+  it("says plainly when a job is already due", async () => {
+    // The one that means the queue is behind, as opposed to scheduled.
+    withJob({ run_after: new Date(Date.now() - 60_000).toISOString() });
+
+    const card = await screen.findByRole("region", { name: "Jobs" });
+    expect(await within(card).findByText("due now")).toBeInTheDocument();
+  });
+
+  it("brings a job forward", async () => {
+    const { posted, user } = withJob();
+    const card = await screen.findByRole("region", { name: "Jobs" });
+
+    await user.click(await within(card).findByRole("button", { name: "Run now" }));
+
+    await waitFor(() => expect(posted).toEqual(["run-now"]));
+  });
+
+  it("asks before dropping one", async () => {
+    // Cancelling is not reversible from here, and what queued it decides when it comes
+    // back — which is not obvious from a button labelled Cancel.
+    const { posted, user } = withJob();
+    const card = await screen.findByRole("region", { name: "Jobs" });
+
+    await user.click(await within(card).findByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByRole("dialog")).toHaveTextContent(/nothing puts it back/);
+    expect(posted).toEqual([]);
+  });
+
+  it("drops it once confirmed", async () => {
+    const { posted, user } = withJob();
+    const card = await screen.findByRole("region", { name: "Jobs" });
+    await user.click(await within(card).findByRole("button", { name: "Cancel" }));
+
+    await user.click(screen.getByRole("button", { name: "Drop it" }));
+
+    await waitFor(() => expect(posted).toEqual(["cancel"]));
+  });
+
+  it("offers neither on a job that has already run", async () => {
+    // Both would be a claim about what is going to happen, and the work is done.
+    withJob({ status: "done" });
+
+    const card = await screen.findByRole("region", { name: "Jobs" });
+    await within(card).findByText("done");
+    expect(within(card).queryByRole("button", { name: "Run now" })).not.toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
   });
 });

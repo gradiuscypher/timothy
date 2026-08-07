@@ -80,16 +80,12 @@ class NameBackfiller:
             if not await usernames.without_names(session, limit=1):
                 return False
 
-            jobs.enqueue(
-                session,
-                jobs.JobKind.BACKFILL_USER_NAMES,
-                limit=self.settings.username_backfill_batch,
-            )
+            # No payload: how many to look up is read when the round runs, so a batch
+            # size changed after this was queued still applies to it.
+            jobs.enqueue(session, jobs.JobKind.BACKFILL_USER_NAMES)
             await session.commit()
 
-        log.info(
-            "queued a user name backfill of up to %d", self.settings.username_backfill_batch
-        )
+        log.info("queued a user name backfill round")
         return True
 
     async def run_forever(self) -> None:

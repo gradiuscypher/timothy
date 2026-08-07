@@ -54,6 +54,7 @@ class Operation(StrEnum):
     LIST_GUILDS = "list_guilds"
     READ_AUDIT_LOG = "read_audit_log"
     READ_OPS = "read_ops"
+    MANAGE_JOBS = "manage_jobs"
     READ_ENFORCEMENT = "read_enforcement"
     READ_GUILD_DIAGNOSTICS = "read_guild_diagnostics"
     REGISTER_GUILD = "register_guild"
@@ -113,6 +114,10 @@ REQUIREMENTS: Final[Mapping[Operation, Requirement]] = {
     # person running the deployment, and this is the one screen where that distinction is
     # worth drawing (ADR 0011).
     Operation.READ_OPS: Requirement.OWNER,
+    # Rescheduling Timothy's own queue. The same requirement as reading it, named
+    # separately because it is the one thing on that screen that acts: whoever runs the
+    # deployment decides when its work runs, and nobody else needs to.
+    Operation.MANAGE_JOBS: Requirement.OWNER,
     # ADR 0001's known future relaxation: to a subscribing guild's own moderators.
     Operation.READ_POOLS: Requirement.ANY_GUILD_MEMBER,
     Operation.MANAGE_SUBSCRIPTIONS: Requirement.TARGET_GUILD_ADMIN,

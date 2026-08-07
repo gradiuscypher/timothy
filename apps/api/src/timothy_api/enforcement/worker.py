@@ -101,20 +101,47 @@ class Worker:
         """Run at most one job. `False` when there was nothing due.
 
         The unit the tests drive, so that what ran and when is not a matter of timing.
+
+        Both ends of a job are logged, and the pair is the point. One job runs at a time,
+        so "started" with no "finished" after it *is* the answer to "what is the queue
+        waiting on" — the question the timestamps alone cannot settle, because a sweep of
+        a large guild legitimately takes half an hour and looks identical to a wedge until
+        it ends. The `extra` fields are what make that a filter in the log store rather
+        than a regex over sentences (ADR 0015).
         """
         claimed = await self._claim()
         if claimed is None:
             return False
 
         job_id, kind, payload = claimed
+        started = self._now()
+        log.info(
+            "job %d (%s) started",
+            job_id,
+            kind,
+            extra={"job_id": job_id, "job_kind": kind, "job_payload": payload},
+        )
         try:
             handler = HANDLERS[JobKind(kind)]
             await handler(self.context, payload)
         except Exception as error:
-            log.exception("job %d (%s) failed", job_id, kind)
+            log.exception(
+                "job %d (%s) failed", job_id, kind, extra={"job_id": job_id, "job_kind": kind}
+            )
             await self._reschedule(job_id, error)
         else:
             await self._finish(job_id)
+            log.info(
+                "job %d (%s) finished in %.1fs",
+                job_id,
+                kind,
+                (self._now() - started).total_seconds(),
+                extra={
+                    "job_id": job_id,
+                    "job_kind": kind,
+                    "seconds": (self._now() - started).total_seconds(),
+                },
+            )
         return True
 
     async def drain(self) -> int:

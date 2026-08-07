@@ -915,16 +915,84 @@ export interface paths {
          * Read Jobs
          * @description The queue itself, newest first.
          *
-         *     Read-only, and there is deliberately no way to retry from here. A job reaches `failed`
-         *     only after exhausting its attempts on something running it again would not fix — an
-         *     unknown kind, a payload missing the key its handler needs. The failures that *are*
-         *     worth retrying are recorded as enforcement outcomes instead, and the sweep picks
-         *     those up on its own (see :mod:`timothy_api.enforcement.engine`). A retry button here
-         *     would be a button that reliably does nothing.
+         *     **Retrying a `failed` job is still not offered, and the reasoning is unchanged.** A
+         *     job reaches `failed` only after exhausting its attempts on something running it again
+         *     would not fix — an unknown kind, a payload missing the key its handler needs. The
+         *     failures that *are* worth retrying are recorded as enforcement outcomes instead, and
+         *     the sweep picks those up on its own (see :mod:`timothy_api.enforcement.engine`).
+         *
+         *     What :func:`run_job_now` and :func:`cancel_job` do is a different thing, which that
+         *     argument never covered: acting on a job that has not run yet. A round dated a week
+         *     forward and a round queued before a setting changed are both work an operator has a
+         *     legitimate reason to reschedule or drop, and neither is a retry.
          */
         get: operations["read_jobs_ops_jobs_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/jobs/{job_id}/run-now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Job Now
+         * @description Pull a queued job forward so the worker takes it on its next poll.
+         *
+         *     Only its `run_after` moves. The payload is left alone — deliberately, because a thin
+         *     payload names what changed and not what to do about it, so a round rescheduled here
+         *     reads the settings and the listings as they stand when it runs rather than as they
+         *     stood when it was queued (see :mod:`timothy_api.jobs`).
+         *
+         *     Due immediately is not the same as next: one worker drains the queue in id order, so
+         *     this puts a job at the front of what is *eligible*, behind whatever is already
+         *     running. A sweep of a large guild can hold the worker for half an hour.
+         *
+         *     Raises:
+         *         HTTPException: 404 if there is no such job, 409 if it is running or finished.
+         */
+        post: operations["run_job_now_ops_jobs__job_id__run_now_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/jobs/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Job
+         * @description Drop a queued job. It will not run, and nothing puts it back.
+         *
+         *     `cancelled` rather than `failed` because the operations view counts failures as a
+         *     health signal and this is not one. Terminal either way: re-queueing is whatever
+         *     queued it in the first place — the sweep's next round, the backfill's next round, or
+         *     the mutation that implied it.
+         *
+         *     A running job cannot be cancelled. Stopping one mid-fan-out would leave Discord
+         *     holding bans that Timothy has no record of issuing, which is precisely the
+         *     attribution ADR 0005 depends on.
+         *
+         *     Raises:
+         *         HTTPException: 404 if there is no such job, 409 if it is running or finished.
+         */
+        post: operations["cancel_job_ops_jobs__job_id__cancel_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1449,7 +1517,7 @@ export interface components {
          * @description Where an enforcement job is in its life.
          * @enum {string}
          */
-        JobStatus: "pending" | "running" | "done" | "failed";
+        JobStatus: "pending" | "running" | "done" | "failed" | "cancelled";
         /**
          * ListingCreate
          * @description Add a user to a pool. An assertion, not an action — see CONTEXT.md.
@@ -3409,6 +3477,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_job_now_ops_jobs__job_id__run_now_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A queue row's id. */
+                job_id: number;
+            };
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_job_ops_jobs__job_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A queue row's id. */
+                job_id: number;
+            };
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRead"];
                 };
             };
             /** @description Validation Error */

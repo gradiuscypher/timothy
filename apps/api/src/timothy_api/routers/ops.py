@@ -1,8 +1,14 @@
 """Is this thing working?
 
 The operator's view: the part of the API that is about Timothy itself rather than about
-pools, guilds or people. Everything here is read-only: nothing on this router changes
-anything, which is what makes it safe to leave a dashboard polling it.
+pools, guilds or people. Every `GET` here is read-only, which is what makes it safe to
+leave a dashboard polling it.
+
+Two routes are not: an operator may pull a queued job forward or drop it. They act on the
+queue — Timothy's own machinery — and never on a pool, a subscription or a ban, so the
+line this module draws still holds. Seeing somebody's configuration in order to explain
+it remains not authority to change it; deciding when Timothy's own work runs is the job
+`OWNER_IDS` names.
 
 `/ops/guilds` is the one thing here that reads other people's configuration, and it is
 here rather than under `/guilds` because of who may read it. Every route under `/guilds`
@@ -34,7 +40,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from timothy_api import audit
 from timothy_api.deps import Requires, SessionDep, SettingsDep
 from timothy_api.jobs import JobKind
-from timothy_api.lookups import get_guild
+from timothy_api.lookups import conflict, get_guild, not_found
 from timothy_api.policy import Operation
 from timothy_api.schemas import (
     ActivityPoint,
@@ -70,6 +76,9 @@ from timothy_core.enums import JobStatus, OutcomeStatus, SubscriptionLevel
 router = APIRouter(prefix="/ops", tags=["ops"])
 
 Operator = Annotated[Actor, Depends(Requires(Operation.READ_OPS))]
+JobManager = Annotated[Actor, Depends(Requires(Operation.MANAGE_JOBS))]
+"""The same person as `Operator` today, named apart because this one *acts*. If the two
+ever diverge it will be here, and the handlers already say which they mean."""
 
 Days = Annotated[
     int,
@@ -107,6 +116,7 @@ GuildSearch = Annotated[
     ),
 ]
 GuildId = Annotated[Snowflake, Path(description="A Discord guild ID.")]
+JobId = Annotated[int, Path(gt=0, description="A queue row's id.")]
 
 DEFAULT_DAYS = 14
 
@@ -414,12 +424,16 @@ async def read_jobs(
 ) -> list[JobRead]:
     """The queue itself, newest first.
 
-    Read-only, and there is deliberately no way to retry from here. A job reaches `failed`
-    only after exhausting its attempts on something running it again would not fix — an
-    unknown kind, a payload missing the key its handler needs. The failures that *are*
-    worth retrying are recorded as enforcement outcomes instead, and the sweep picks
-    those up on its own (see :mod:`timothy_api.enforcement.engine`). A retry button here
-    would be a button that reliably does nothing.
+    **Retrying a `failed` job is still not offered, and the reasoning is unchanged.** A
+    job reaches `failed` only after exhausting its attempts on something running it again
+    would not fix — an unknown kind, a payload missing the key its handler needs. The
+    failures that *are* worth retrying are recorded as enforcement outcomes instead, and
+    the sweep picks those up on its own (see :mod:`timothy_api.enforcement.engine`).
+
+    What :func:`run_job_now` and :func:`cancel_job` do is a different thing, which that
+    argument never covered: acting on a job that has not run yet. A round dated a week
+    forward and a round queued before a setting changed are both work an operator has a
+    legitimate reason to reschedule or drop, and neither is a retry.
     """
     query = select(Job).order_by(Job.id.desc()).limit(limit)
     if before_id is not None:
@@ -432,3 +446,72 @@ async def read_jobs(
         query = query.where(matching(q, Job.kind, Job.payload, Job.last_error))
 
     return [JobRead.of(job) for job in await session.scalars(query)]
+
+
+@router.post("/jobs/{job_id}/run-now")
+async def run_job_now(job_id: JobId, actor: JobManager, session: SessionDep) -> JobRead:
+    """Pull a queued job forward so the worker takes it on its next poll.
+
+    Only its `run_after` moves. The payload is left alone — deliberately, because a thin
+    payload names what changed and not what to do about it, so a round rescheduled here
+    reads the settings and the listings as they stand when it runs rather than as they
+    stood when it was queued (see :mod:`timothy_api.jobs`).
+
+    Due immediately is not the same as next: one worker drains the queue in id order, so
+    this puts a job at the front of what is *eligible*, behind whatever is already
+    running. A sweep of a large guild can hold the worker for half an hour.
+
+    Raises:
+        HTTPException: 404 if there is no such job, 409 if it is running or finished.
+    """
+    job = await session.get(Job, job_id)
+    if job is None:
+        raise not_found(f"job: {job_id}")
+    if job.status != JobStatus.PENDING:
+        raise conflict(f"job {job_id} is {job.status}, and only a pending job can be moved")
+
+    job.run_after = datetime.now(UTC)
+    audit.record(
+        session,
+        actor=actor,
+        action=audit.AuditAction.JOB_RUN_NOW,
+        target=audit.job_target(job_id),
+        detail={"kind": job.kind},
+    )
+    await session.commit()
+    return JobRead.of(job)
+
+
+@router.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: JobId, actor: JobManager, session: SessionDep) -> JobRead:
+    """Drop a queued job. It will not run, and nothing puts it back.
+
+    `cancelled` rather than `failed` because the operations view counts failures as a
+    health signal and this is not one. Terminal either way: re-queueing is whatever
+    queued it in the first place — the sweep's next round, the backfill's next round, or
+    the mutation that implied it.
+
+    A running job cannot be cancelled. Stopping one mid-fan-out would leave Discord
+    holding bans that Timothy has no record of issuing, which is precisely the
+    attribution ADR 0005 depends on.
+
+    Raises:
+        HTTPException: 404 if there is no such job, 409 if it is running or finished.
+    """
+    job = await session.get(Job, job_id)
+    if job is None:
+        raise not_found(f"job: {job_id}")
+    if job.status != JobStatus.PENDING:
+        raise conflict(f"job {job_id} is {job.status}, and only a pending job can be cancelled")
+
+    job.status = JobStatus.CANCELLED
+    job.last_error = "cancelled by an operator"
+    audit.record(
+        session,
+        actor=actor,
+        action=audit.AuditAction.JOB_CANCEL,
+        target=audit.job_target(job_id),
+        detail={"kind": job.kind},
+    )
+    await session.commit()
+    return JobRead.of(job)
