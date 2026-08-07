@@ -35,6 +35,7 @@ import {
   Table,
   When,
 } from "@/components/ui";
+import { useToast } from "@/components/Toast";
 
 /** Everything one server's administrators control, plus what Timothy has done there. */
 export function GuildDetail({ guildId }: { guildId: string }) {
@@ -81,13 +82,18 @@ export function GuildDetail({ guildId }: { guildId: string }) {
 
 function PauseSwitch({ guildId, paused }: { guildId: string; paused: boolean }) {
   const pause = usePauseEnforcement(guildId);
+  const notify = useToast();
   return (
     <div className="flex items-center gap-2">
       <ErrorNote error={pause.error} />
       <Button
         variant={paused ? "primary" : "secondary"}
         disabled={pause.isPending}
-        onClick={() => pause.mutate(!paused)}
+        onClick={() =>
+          pause.mutate(!paused, {
+            onSuccess: () => notify(paused ? "Enforcement resumed." : "Enforcement paused."),
+          })
+        }
       >
         {paused ? "Resume enforcement" : "Pause enforcement"}
       </Button>
@@ -104,6 +110,7 @@ function Subscriptions({ guildId }: { guildId: string }) {
   const pools = usePools();
   const set = useSetSubscription(guildId);
   const remove = useDeleteSubscription(guildId);
+  const notify = useToast();
 
   const [poolName, setPoolName] = useState("");
   const [level, setLevel] = useState<SubscriptionLevel>("ban");
@@ -137,12 +144,16 @@ function Subscriptions({ guildId }: { guildId: string }) {
                   aria-label={`Level for ${subscription.pool_name}`}
                   value={subscription.level}
                   className="h-8 w-28"
-                  onChange={(event) =>
-                    set.mutate({
-                      poolName: subscription.pool_name,
-                      level: event.target.value as SubscriptionLevel,
-                    })
-                  }
+                  onChange={(event) => {
+                    const level = event.target.value as SubscriptionLevel;
+                    set.mutate(
+                      { poolName: subscription.pool_name, level },
+                      {
+                        onSuccess: () =>
+                          notify(`${subscription.pool_name} set to ${level}.`),
+                      },
+                    );
+                  }}
                 >
                   {LEVELS.map((option) => (
                     <option key={option} value={option}>
@@ -184,7 +195,15 @@ function Subscriptions({ guildId }: { guildId: string }) {
           className="mt-4 flex flex-wrap items-end gap-2 border-t border-surface-border pt-4"
           onSubmit={(event) => {
             event.preventDefault();
-            set.mutate({ poolName, level }, { onSuccess: () => setPoolName("") });
+            set.mutate(
+              { poolName, level },
+              {
+                onSuccess: () => {
+                  notify(`Subscribed to ${poolName}.`);
+                  setPoolName("");
+                },
+              },
+            );
           }}
         >
           <Field label="Subscribe to">
@@ -246,7 +265,16 @@ function Subscriptions({ guildId }: { guildId: string }) {
         onCancel={() => setPending(null)}
         onConfirm={() => {
           if (!pending) return;
-          remove.mutate(pending, { onSuccess: () => setPending(null) });
+          remove.mutate(pending, {
+            onSuccess: () => {
+              notify(
+                pending.revert
+                  ? `Unsubscribed from ${pending.poolName} and lifted its bans.`
+                  : `Unsubscribed from ${pending.poolName}.`,
+              );
+              setPending(null);
+            },
+          });
         }}
       />
     </Card>
@@ -259,6 +287,7 @@ function Exceptions({ guildId }: { guildId: string }) {
   const exceptions = useExceptions(guildId);
   const create = useCreateException(guildId);
   const remove = useDeleteException(guildId);
+  const notify = useToast();
   const [userId, setUserId] = useState("");
   const [reason, setReason] = useState("");
 
@@ -294,7 +323,11 @@ function Exceptions({ guildId }: { guildId: string }) {
                   size="sm"
                   variant="ghost"
                   disabled={remove.isPending}
-                  onClick={() => remove.mutate(exception.user_id)}
+                  onClick={() =>
+                    remove.mutate(exception.user_id, {
+                      onSuccess: () => notify("Exception removed."),
+                    })
+                  }
                 >
                   Remove
                 </Button>
@@ -312,6 +345,7 @@ function Exceptions({ guildId }: { guildId: string }) {
             { userId, reason: reason || null },
             {
               onSuccess: () => {
+                notify("Exception added.");
                 setUserId("");
                 setReason("");
               },
@@ -352,6 +386,7 @@ function NotificationChannel({ guildId }: { guildId: string }) {
   const channel = useNotificationChannel(guildId);
   const set = useSetNotificationChannel(guildId);
   const clear = useClearNotificationChannel(guildId);
+  const notify = useToast();
   const [channelId, setChannelId] = useState("");
 
   return (
@@ -372,7 +407,11 @@ function NotificationChannel({ guildId }: { guildId: string }) {
             size="sm"
             variant="ghost"
             disabled={clear.isPending}
-            onClick={() => clear.mutate()}
+            onClick={() =>
+              clear.mutate(undefined, {
+                onSuccess: () => notify("Notification channel cleared."),
+              })
+            }
           >
             Clear
           </Button>
@@ -385,7 +424,12 @@ function NotificationChannel({ guildId }: { guildId: string }) {
         className="space-y-2 border-t border-surface-border pt-4"
         onSubmit={(event) => {
           event.preventDefault();
-          set.mutate(channelId, { onSuccess: () => setChannelId("") });
+          set.mutate(channelId, {
+            onSuccess: () => {
+              notify("Notification channel set.");
+              setChannelId("");
+            },
+          });
         }}
       >
         <Field label="Channel ID">

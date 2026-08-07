@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { ApiError } from "@/api/client";
 import { installGlobalErrorReporting } from "@/api/report";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ToastProvider } from "@/components/Toast";
 import { makeRouter } from "@/router";
 
 import "./styles.css";
@@ -39,7 +40,9 @@ if (root) {
     <StrictMode>
       <ErrorBoundary>
         <QueryClientProvider client={makeQueryClient()}>
-          <RouterProvider router={makeRouter()} />
+          <ToastProvider>
+            <RouterProvider router={makeRouter()} />
+          </ToastProvider>
         </QueryClientProvider>
       </ErrorBoundary>
     </StrictMode>,
