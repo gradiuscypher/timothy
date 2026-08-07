@@ -27,6 +27,7 @@ halting is what the rail is for, undoing is what `revert` is for.
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -74,6 +75,24 @@ because the guild's moderators are the ones who have to decide whether the burst
 legitimate. Red, like a ban: something a moderator has to deal with now."""
 
 BREAKER_TITLE = "Enforcement paused here"
+
+log = logging.getLogger(__name__)
+
+
+def _outcome(decision: Decision | None) -> str:
+    """The one word that says what happened to a pair, for the log's `decision` field.
+
+    A `Skip` carries the reason it skipped, and that reason is the whole value of the
+    line: `skip_not_listed` and `skip_user_absent` are the difference between a sweep
+    with nothing to do and a sweep whose targets have all left.
+    """
+    match decision:
+        case None:
+            return "none"
+        case Skip(reason=reason):
+            return f"skip_{reason.value}"
+        case _:
+            return type(decision).__name__.lower()
 
 
 @dataclass(slots=True)
@@ -137,12 +156,19 @@ class Enforcer:
 
         `None` when there was nothing to decide: Timothy is not in the guild, or the
         breaker has already halted this run there.
+
+        Every pair logs exactly one line at DEBUG, including the two that decide nothing.
+        A fan-out is thousands of these, which is why it is not INFO — but it is the only
+        record of *why* a user the operator expected to be banned was not, and the two
+        `None` cases are the ones a sweep's own counters cannot tell apart.
         """
         if run.is_halted(guild_id):
+            self._log_pair(guild_id, user_id, "halted")
             return None
 
         request = await state.gather(session, self.discord, guild_id=guild_id, user_id=user_id)
         if request is None:
+            self._log_pair(guild_id, user_id, "not_in_guild")
             return None
 
         decision = decide(request)
@@ -153,7 +179,22 @@ class Enforcer:
                 await self._warn(session, run, request, justifications)
             case Skip(reason=reason):
                 await self._skip(session, request, reason)
+        self._log_pair(guild_id, user_id, _outcome(decision))
         return decision
+
+    def _log_pair(self, guild_id: int, user_id: int, decision: str) -> None:
+        """One pair, one line.
+
+        IDs go in `extra` as well as the message so the log store can filter on them
+        without parsing a sentence (ADR 0015).
+        """
+        log.debug(
+            "guild %d user %d: %s",
+            guild_id,
+            user_id,
+            decision,
+            extra={"guild_id": guild_id, "user_id": user_id, "decision": decision},
+        )
 
     # -- the three answers ---------------------------------------------------
 
@@ -339,6 +380,19 @@ class Enforcer:
         """
         run.halted.add(guild_id)
         limit = self.settings.enforcement_burst_limit
+        # A rail firing is the loudest thing that happens here and it had no log line at
+        # all: the audit row is durable but nobody is watching that table at 3am.
+        log.warning(
+            "circuit breaker tripped in guild %d after %d action(s)%s",
+            guild_id,
+            limit,
+            " (dry run)" if self.settings.dry_run else "",
+            extra={
+                "guild_id": guild_id,
+                "burst_limit": limit,
+                "dry_run": self.settings.dry_run,
+            },
+        )
 
         if not self.settings.dry_run:
             guild = await session.get(Guild, guild_id)

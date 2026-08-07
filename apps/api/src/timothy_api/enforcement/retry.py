@@ -13,12 +13,15 @@ ban permission will refuse the next attempt too, and the durable answer to that 
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Final
 
 from timothy_core.ports.discord import DiscordUnavailableError, RateLimitedError
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+
+log = logging.getLogger(__name__)
 
 MAX_ATTEMPTS: Final = 4
 UNAVAILABLE_BACKOFF: Final = 2.0
@@ -48,10 +51,28 @@ async def with_backoff[T](
         except RateLimitedError as error:
             if attempt == max_attempts:
                 raise
+            # WARNING, not DEBUG: a stall here is time the whole worker spends asleep,
+            # because every Discord call the backend makes goes through it in turn. It is
+            # the difference between a slow sweep and a wedged one, and it left no trace.
+            log.warning(
+                "rate limited, waiting %.1fs (attempt %d of %d)",
+                error.retry_after,
+                attempt,
+                max_attempts,
+                extra={"retry_after": error.retry_after, "attempt": attempt},
+            )
             await sleep(error.retry_after)
-        except DiscordUnavailableError:
+        except DiscordUnavailableError as error:
             if attempt == max_attempts:
                 raise
+            log.warning(
+                "discord unreachable, waiting %.1fs (attempt %d of %d): %s",
+                delay,
+                attempt,
+                max_attempts,
+                error,
+                extra={"retry_after": delay, "attempt": attempt},
+            )
             await sleep(delay)
             delay *= 2
     msg = "unreachable: the loop either returns or raises"  # pragma: no cover

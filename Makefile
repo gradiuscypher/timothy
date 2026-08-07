@@ -15,6 +15,31 @@ WEB := web
 COMPOSE := docker compose
 SERVICE ?= backend
 
+# `make logs bot`, as well as `make logs SERVICE=bot`.
+#
+# Make reads a trailing `bot` as a second goal, not as an argument. Unguarded, that ran the
+# recipe against the default SERVICE and only *then* failed with "No rule to make target
+# 'bot'" — and under `logs -f` you never reach the error, because you interrupt the follow
+# first. So the symptom was every service name printing the backend's logs, which is the
+# worst way this file could be wrong: quietly answering a question nobody asked.
+#
+# Only goals after the first are candidates, and the compose lookup happens only when there
+# is one — `docker` stays off the path of `make help` and of every target that is not about
+# logs. A trailing word that names no service is left for make to reject exactly as before.
+#
+# `logs` is both a target here and a service in compose, so it is never swallowed: a bare
+# `make logs` has to stay the recipe. Reach that service the long way, with SERVICE=logs.
+TRAILING := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+ifneq ($(TRAILING),)
+NAMED := $(filter-out logs,$(filter $(shell $(COMPOSE) config --services 2>/dev/null),$(TRAILING)))
+ifneq ($(NAMED),)
+SERVICE := $(firstword $(NAMED))
+# Swallow it, so make does not go looking for a target by that name.
+$(NAMED):
+	@:
+endif
+endif
+
 # `docker compose logs` prefixes every line with the service name, which is not JSON and
 # stops `jq` at column 10. `--no-log-prefix` is the fix; `fromjson? // empty` skips any
 # line that is not JSON at all rather than aborting the pipe on the first one.
@@ -142,6 +167,12 @@ jobs-log: ## Every job start and finish, as a timeline
 .PHONY: jobs-now
 jobs-now: ## What the worker is on right now
 	@$(LOGS) --tail $(N) backend | $(JQ) '$(LINE) | select(.extra.job_id) | "\(.ts) \(.message)"' | tail -5
+
+# Needs LOG_LEVEL=debug on the backend: the per-pair line is DEBUG because a fan-out is
+# thousands of them. `pairs` is the detail, `jobs-now` is the altitude above it.
+.PHONY: pairs
+pairs: ## What the worker decided about each (guild, user)
+	$(LOGS) --tail $(N) backend | $(JQ) '$(LINE) | select(.extra.decision) | "\(.ts) guild \(.extra.guild_id) user \(.extra.user_id) \(.extra.decision)"'
 
 .PHONY: names-log
 names-log: ## Follow the user-name backfill

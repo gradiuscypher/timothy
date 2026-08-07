@@ -15,7 +15,7 @@ interleave with.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from timothy_api import usernames
 from timothy_api.enforcement import outcomes, revert, state
@@ -211,19 +211,48 @@ async def backfill_user_names(ctx: JobContext, _payload: dict[str, int]) -> None
 # -- shared shapes -----------------------------------------------------------
 
 
+PROGRESS_EVERY: Final = 100
+"""How often a fan-out says where it has got to. Small enough that a wedged sweep is
+obvious within a minute or so of Discord calls, large enough that a big one adds tens of
+lines rather than thousands — the per-pair detail is `engine`'s DEBUG line, not this."""
+
+
 async def _enforce_pairs(ctx: JobContext, pairs: Iterable[tuple[int, int]]) -> None:
     """Ask about each (guild, user) in turn, one transaction each.
 
     One `Run` across the whole fan-out, because the circuit breaker's threshold is per
     guild per run and this is the run.
+
+    The pairs are materialised so the total can be logged before the work starts. They
+    come from `state` queries that already hold the same IDs in a list, so this costs a
+    second list of tuples and buys the one number that says whether a long job is large
+    or stuck — the question `worker`'s start/finish pair cannot answer on its own.
     """
     run = Run()
-    for guild_id, user_id in pairs:
+    todo = list(pairs)
+    log.info("enforcing %d (guild, user) pair(s)", len(todo), extra={"pair_total": len(todo)})
+    halted = 0
+    for done, (guild_id, user_id) in enumerate(todo, start=1):
         if run.is_halted(guild_id):
+            halted += 1
             continue
         async with ctx.sessions() as session:
             await ctx.enforcer.enforce(session, run, guild_id=guild_id, user_id=user_id)
             await session.commit()
+        if done % PROGRESS_EVERY == 0:
+            log.info(
+                "enforced %d of %d pair(s)",
+                done,
+                len(todo),
+                extra={"pair_done": done, "pair_total": len(todo)},
+            )
+    if halted:
+        log.warning(
+            "skipped %d of %d pair(s): the breaker had halted their guild",
+            halted,
+            len(todo),
+            extra={"pair_halted": halted, "pair_total": len(todo)},
+        )
 
 
 async def _revert_pairs(
