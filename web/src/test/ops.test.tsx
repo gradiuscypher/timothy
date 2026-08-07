@@ -372,3 +372,168 @@ describe("the job list", () => {
     expect(screen.getByLabelText("Status")).toHaveValue("");
   });
 });
+
+// -- every server's settings -----------------------------------------------------------
+
+const CONFIG = {
+  guild_id: "100000000000000002",
+  name: "Neon Atrium",
+  joined_at: "2026-01-01T00:00:00Z",
+  enforcement_paused: false,
+  ban_subscriptions: 2,
+  warn_subscriptions: 1,
+  exceptions: 3,
+  notification_channel_id: "400000000000000001",
+};
+
+/** The operator's inventory of every server, mounted through the router for its links. */
+function guildsScreen(configs: unknown[] = [CONFIG]) {
+  server.use(get("/auth/me", OWNER), get("/ops/guilds", configs as never));
+  return renderApp("/ops/guilds");
+}
+
+/** Every `/ops/guilds` request made from now on, as its query string. */
+function watchGuildRequests(): URLSearchParams[] {
+  const asked: URLSearchParams[] = [];
+  server.use(
+    http.get(apiUrl("/ops/guilds"), ({ request }) => {
+      asked.push(new URL(request.url).searchParams);
+      return HttpResponse.json([]);
+    }),
+  );
+  return asked;
+}
+
+function guildScreen(config: Record<string, unknown> = {}) {
+  server.use(
+    get("/auth/me", OWNER),
+    get(`/ops/guilds/${CONFIG.guild_id}`, {
+      guild: {
+        guild_id: CONFIG.guild_id,
+        name: "Neon Atrium",
+        joined_at: CONFIG.joined_at,
+        enforcement_paused: false,
+      },
+      subscriptions: [],
+      exceptions: [],
+      notification_channel: null,
+      ...config,
+    } as never),
+  );
+  return renderApp(`/ops/guilds/${CONFIG.guild_id}`);
+}
+
+describe("every server's settings", () => {
+  it("lists servers the operator does not administer", async () => {
+    // The whole reason the screen exists: the report comes from a server the person
+    // debugging it is not in.
+    guildsScreen();
+
+    expect(await screen.findByText("Neon Atrium")).toBeInTheDocument();
+  });
+
+  it("counts ban and warn subscriptions apart", async () => {
+    // A server subscribed only at warn looks exactly like one that is working, right up
+    // until nobody is banned. That is the configuration mistake this page is for.
+    guildsScreen();
+
+    const row = (await screen.findByText("Neon Atrium")).closest("tr")!;
+    expect(within(row).getByText("2 ban")).toBeInTheDocument();
+    expect(within(row).getByText("1 warn")).toBeInTheDocument();
+  });
+
+  it("says plainly when a server has subscribed to nothing", async () => {
+    guildsScreen([{ ...CONFIG, ban_subscriptions: 0, warn_subscriptions: 0 }]);
+
+    const row = (await screen.findByText("Neon Atrium")).closest("tr")!;
+    expect(within(row).getByText("none")).toBeInTheDocument();
+  });
+
+  it("marks a paused server", async () => {
+    guildsScreen([{ ...CONFIG, enforcement_paused: true }]);
+
+    const row = (await screen.findByText("Neon Atrium")).closest("tr")!;
+    expect(within(row).getByText("paused")).toBeInTheDocument();
+  });
+
+  it("searches the backend rather than the page", async () => {
+    // A name or an ID, and the operator has one or the other. Either way the whole
+    // inventory is not in the browser to filter.
+    const { user } = guildsScreen();
+    await screen.findByLabelText("Search");
+
+    const asked = watchGuildRequests();
+    await user.type(screen.getByLabelText("Search"), "atrium");
+
+    await waitFor(() => expect(asked.at(-1)?.get("q")).toBe("atrium"));
+  });
+
+  it("shows one server's settings in full", async () => {
+    guildScreen({
+      subscriptions: [
+        {
+          guild_id: CONFIG.guild_id,
+          pool_id: 1,
+          pool_name: "spam",
+          level: "warn",
+          created_by: "user:200000000000000002",
+          created_at: "2026-02-01T00:00:00Z",
+        },
+      ],
+      exceptions: [
+        {
+          guild_id: CONFIG.guild_id,
+          user_id: "300000000000000001",
+          reason: "known good",
+          created_by: "system",
+          created_at: "2026-03-01T00:00:00Z",
+        },
+      ],
+      notification_channel: {
+        guild_id: CONFIG.guild_id,
+        channel_id: "400000000000000001",
+        created_by: "user:200000000000000002",
+        created_at: "2026-02-01T00:00:00Z",
+      },
+    });
+
+    expect(await screen.findByText("spam")).toBeInTheDocument();
+    expect(screen.getByText("warn")).toBeInTheDocument();
+    expect(screen.getByText("known good")).toBeInTheDocument();
+    expect(screen.getByText("400000000000000001")).toBeInTheDocument();
+  });
+
+  it("says what is missing rather than showing an empty table", async () => {
+    // "Subscribed to nothing" and "reports nowhere" are answers to the question that
+    // brought somebody here, and a blank card is not.
+    guildScreen();
+
+    expect(
+      await screen.findByText(/subscribes to nothing/, { exact: false }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/No channel is nominated/)).toBeInTheDocument();
+  });
+
+  it("explains a paused server before anything else on the page", async () => {
+    guildScreen({
+      guild: {
+        guild_id: CONFIG.guild_id,
+        name: "Neon Atrium",
+        joined_at: CONFIG.joined_at,
+        enforcement_paused: true,
+      },
+    });
+
+    const banner = await screen.findByRole("status");
+    expect(banner).toHaveTextContent(/Enforcement is paused here/);
+  });
+
+  it("offers nothing that changes a setting", async () => {
+    // Seeing a setting in order to explain it is not authority over it. Every button
+    // `GuildDetail` has is deliberately absent here.
+    guildScreen();
+    await screen.findByText(/subscribes to nothing/);
+
+    expect(screen.queryByRole("button", { name: /Pause|Resume|Save|Remove/ })).toBeNull();
+  });
+});

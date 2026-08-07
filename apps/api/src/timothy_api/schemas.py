@@ -604,6 +604,42 @@ class FailureGroup(BaseModel):
     latest_at: datetime
 
 
+class GuildConfigSummary(BaseModel):
+    """One guild's configuration, reduced to what fits on a row.
+
+    The counts rather than the things counted: a hundred-odd guilds, each with its own
+    exceptions, is a payload nobody reads and a screen nobody scans. What this is for is
+    spotting the guild worth opening — the one that is paused, or subscribed to nothing,
+    or has notifications pointed nowhere — and :class:`GuildConfigRead` is the opening.
+    """
+
+    guild_id: Snowflake
+    name: str | None
+    joined_at: datetime
+    enforcement_paused: bool
+    ban_subscriptions: int
+    warn_subscriptions: int
+    exceptions: int
+    notification_channel_id: Snowflake | None
+    """`None` for a guild that has nominated no channel, which is also what a warn-level
+    subscription there has no way of reporting to."""
+
+
+class GuildConfigRead(BaseModel):
+    """Everything one guild's administrators have configured, in one call.
+
+    The same four things `GuildDetail` assembles from four administrator-only routes, for
+    a reader who administers nothing (ADR 0011). Settings only: what Timothy has *done*
+    in a guild is enforcement, and what Discord will *let* it do is diagnostics, and both
+    have their own routes with their own audiences.
+    """
+
+    guild: GuildRead
+    subscriptions: list[SubscriptionRead]
+    exceptions: list[ExceptionRead]
+    notification_channel: NotificationChannelRead | None
+
+
 class JobRead(BaseModel):
     """One row of the queue, as an operator needs to read it."""
 

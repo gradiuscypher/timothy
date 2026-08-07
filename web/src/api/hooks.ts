@@ -27,6 +27,8 @@ import {
   type Subscription,
   type ActivityPoint,
   type FailureGroup,
+  type GuildConfig,
+  type GuildConfigSummary,
   type Job,
   type JobStatus,
   type OpsOverview,
@@ -65,6 +67,8 @@ export const keys = {
   opsFailures: ["ops", "failures"] as const,
   opsJobs: (status: string, kind: string, q: string) =>
     ["ops", "jobs", status, kind, q] as const,
+  opsGuilds: (q: string) => ["ops", "guilds", q] as const,
+  opsGuild: (id: string) => ["ops", "guilds", id] as const,
 };
 
 // -- who is signed in ------------------------------------------------------------------
@@ -628,6 +632,39 @@ export function useOpsJobs(
               ...(beforeId === null ? {} : { before_id: beforeId }),
             },
           },
+        }),
+      ),
+  });
+}
+
+/**
+ * Every server's configuration, whoever is signed in.
+ *
+ * `useMyGuilds` is the same question asked of `/guilds`, and it answers with the caller's
+ * own servers — the front door of an administrator's UI. This one is the operator's
+ * inventory and belongs to nobody's servers, so the two are separate hooks over separate
+ * routes rather than one hook with a flag.
+ *
+ * Settings do not move on their own, so neither of these polls: what changes here is
+ * changed by a person in some server, and a stale row is worth less than a refetch every
+ * thirty seconds of a hundred rows nobody is watching.
+ */
+export function useGuildConfigs(q: string): UseQueryResult<GuildConfigSummary[]> {
+  return useQuery({
+    queryKey: keys.opsGuilds(q),
+    placeholderData: (previous) => previous,
+    queryFn: async () =>
+      unwrap(await api.GET("/ops/guilds", { params: { query: { ...(q ? { q } : {}) } } })),
+  });
+}
+
+export function useGuildConfig(guildId: string): UseQueryResult<GuildConfig> {
+  return useQuery({
+    queryKey: keys.opsGuild(guildId),
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/ops/guilds/{guild_id}", {
+          params: { path: { guild_id: guildId } },
         }),
       ),
   });

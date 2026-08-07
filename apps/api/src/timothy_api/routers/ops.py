@@ -1,8 +1,14 @@
 """Is this thing working?
 
-The operator's view, and the only part of the API that is about Timothy itself rather
-than about pools, guilds or people. Everything here is read-only: nothing on this router
-changes anything, which is what makes it safe to leave a dashboard polling it.
+The operator's view: the part of the API that is about Timothy itself rather than about
+pools, guilds or people. Everything here is read-only: nothing on this router changes
+anything, which is what makes it safe to leave a dashboard polling it.
+
+`/ops/guilds` is the one thing here that reads other people's configuration, and it is
+here rather than under `/guilds` because of who may read it. Every route under `/guilds`
+is scoped to the caller's own guilds, by design; this one is scoped to nobody's, which
+makes it an operator's route wearing a guild's subject matter. Read-only like the rest —
+seeing a setting in order to explain it is not authority to change it.
 
 **Where the numbers come from matters.** Anything counted over time is read from
 `audit_log`, which is append-only. `enforcement_outcomes` is one row per
@@ -20,7 +26,7 @@ different jobs, and since ADR 0012 they are not even the same permission.
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -28,15 +34,23 @@ from sqlalchemy.sql.elements import ColumnElement
 from timothy_api import audit
 from timothy_api.deps import Requires, SessionDep, SettingsDep
 from timothy_api.jobs import JobKind
+from timothy_api.lookups import get_guild
 from timothy_api.policy import Operation
 from timothy_api.schemas import (
     ActivityPoint,
+    ExceptionRead,
     FailureGroup,
+    GuildConfigRead,
+    GuildConfigSummary,
+    GuildRead,
     InventoryCounts,
     JobRead,
+    NotificationChannelRead,
     OpsOverview,
     OutcomeCounts,
     QueueDepth,
+    Snowflake,
+    SubscriptionRead,
 )
 from timothy_api.search import MAX_QUERY, matching
 from timothy_core.actors import Actor
@@ -51,7 +65,7 @@ from timothy_core.db.models import (
     Pool,
     Subscription,
 )
-from timothy_core.enums import JobStatus, OutcomeStatus
+from timothy_core.enums import JobStatus, OutcomeStatus, SubscriptionLevel
 
 router = APIRouter(prefix="/ops", tags=["ops"])
 
@@ -84,6 +98,15 @@ Search = Annotated[
         ),
     ),
 ]
+GuildSearch = Annotated[
+    str | None,
+    Query(
+        min_length=1,
+        max_length=MAX_QUERY,
+        description="Match against the guild's name or its ID, as text.",
+    ),
+]
+GuildId = Annotated[Snowflake, Path(description="A Discord guild ID.")]
 
 DEFAULT_DAYS = 14
 
@@ -265,6 +288,118 @@ async def read_failures(
         )
         for guild_id, guild_name, reason, count, latest in rows
     ]
+
+
+@router.get("/guilds")
+async def read_guild_configs(
+    _actor: Operator, session: SessionDep, q: GuildSearch = None
+) -> list[GuildConfigSummary]:
+    """Every guild Timothy is in and how each one is configured, whoever is asking.
+
+    `/guilds` answers a different question and keeps its answer: it lists the guilds the
+    caller administers, because it is the front door of a web UI for administrators. The
+    operator administers nothing (ADR 0011) and gets an empty list there — which is
+    correct, and useless when the report is "Timothy is not banning in my server" and the
+    answer turns out to be a pause nobody remembers setting.
+
+    Unpaged on purpose. This is the deployment's inventory, bounded by how many guilds
+    Timothy is in, and a page boundary through "all guild settings" would quietly answer
+    a different question than the one asked.
+
+    Four queries rather than one per guild: the aggregates are grouped in SQL and joined
+    up here, because a hundred guilds each fetching their own counts is a hundred round
+    trips to draw one table.
+    """
+    guilds = list(
+        await session.scalars(
+            select(Guild)
+            .where(*([matching(q, Guild.name, Guild.guild_id)] if q is not None else []))
+            # Nameless guilds sort last rather than first: a `NULL` name means the gateway
+            # has not mentioned this guild since it was registered, which is a curiosity
+            # and not the top of the list.
+            .order_by(Guild.name.is_(None), Guild.name, Guild.guild_id)
+        )
+    )
+    guild_ids = [guild.guild_id for guild in guilds]
+
+    levels = {
+        (guild_id, level): count
+        for guild_id, level, count in await session.execute(
+            select(Subscription.guild_id, Subscription.level, func.count())
+            .where(Subscription.guild_id.in_(guild_ids))
+            .group_by(Subscription.guild_id, Subscription.level)
+        )
+    }
+    exception_counts = await session.execute(
+        select(GuildException.guild_id, func.count().label("total"))
+        .where(GuildException.guild_id.in_(guild_ids))
+        .group_by(GuildException.guild_id)
+    )
+    exceptions = {row.guild_id: row.total for row in exception_counts}
+
+    nominated = await session.execute(
+        select(NotificationChannel.guild_id, NotificationChannel.channel_id).where(
+            NotificationChannel.guild_id.in_(guild_ids)
+        )
+    )
+    channels = {row.guild_id: row.channel_id for row in nominated}
+
+    return [
+        GuildConfigSummary(
+            guild_id=guild.guild_id,
+            name=guild.name,
+            joined_at=guild.joined_at,
+            enforcement_paused=guild.enforcement_paused,
+            ban_subscriptions=levels.get((guild.guild_id, SubscriptionLevel.BAN), 0),
+            warn_subscriptions=levels.get((guild.guild_id, SubscriptionLevel.WARN), 0),
+            exceptions=exceptions.get(guild.guild_id, 0),
+            notification_channel_id=channels.get(guild.guild_id),
+        )
+        for guild in guilds
+    ]
+
+
+@router.get("/guilds/{guild_id}")
+async def read_guild_config(
+    guild_id: GuildId, _actor: Operator, session: SessionDep
+) -> GuildConfigRead:
+    """One guild's settings in full, whoever is asking.
+
+    Everything the guild's own administrators configured, assembled here so that reading
+    it costs one call rather than four — this is the "why is this server behaving like
+    that" screen, and the answer is usually the shape of the whole configuration rather
+    than any one row of it.
+
+    Read-only, and there is deliberately no operator write beside it. Being able to see
+    a guild's settings to explain them is not authority over them: a subscription belongs
+    to the guild that holds it (ADR 0001), and an operator who changes one has made a
+    change its administrators never made and cannot see the reason for.
+    """
+    guild = await get_guild(session, guild_id)
+
+    subscriptions = await session.execute(
+        select(Subscription, Pool)
+        .join(Pool, Pool.id == Subscription.pool_id)
+        .where(Subscription.guild_id == guild_id)
+        .order_by(Pool.name)
+    )
+    exceptions = await session.scalars(
+        select(GuildException)
+        .where(GuildException.guild_id == guild_id)
+        .order_by(GuildException.created_at)
+    )
+    channel = await session.get(NotificationChannel, guild_id)
+
+    return GuildConfigRead(
+        guild=GuildRead.of(guild),
+        subscriptions=[
+            SubscriptionRead.of(subscription, pool) for subscription, pool in subscriptions
+        ],
+        exceptions=[ExceptionRead.of(exception) for exception in exceptions],
+        notification_channel=(
+            NotificationChannelRead.of(channel) if channel is not None else None
+        ),
+    )
 
 
 @router.get("/jobs")

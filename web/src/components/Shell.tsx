@@ -319,6 +319,10 @@ function OpsMenu({ path }: { path: string }) {
   const items = [
     { to: "/ops", label: "Overview" },
     { to: "/ops/jobs", label: "Jobs" },
+    // Every server's settings, which is not what "Your servers" in the bar above means:
+    // that one is the servers this person administers, and the operator administers
+    // none of them.
+    { to: "/ops/guilds", label: "Servers" },
   ] as const;
 
   return (

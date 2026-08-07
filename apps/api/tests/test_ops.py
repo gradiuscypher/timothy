@@ -25,7 +25,9 @@ from .conftest import (
     GUILD,
     GUILD_ADMIN,
     LISTED_USER,
+    MANAGEMENT_GUILD,
     MEMBER,
+    OTHER_GUILD,
     OWNER,
     POOL_MANAGER,
     Enforcement,
@@ -85,10 +87,21 @@ def _list(client: TestClient, user_id: int = LISTED_USER) -> httpx2.Response:
 
 # -- who may look ----------------------------------------------------------------------
 
+OPS_PATHS = (
+    "/ops/overview",
+    "/ops/activity",
+    "/ops/failures",
+    "/ops/jobs",
+    "/ops/guilds",
+    f"/ops/guilds/{GUILD}",
+)
+"""Every route on the router, because the gate is the router's and not each route's — a
+new one added without a thought about who may read it should fail here."""
+
 
 def test_the_ops_view_is_for_whoever_runs_the_deployment(pool: TestClient) -> None:
     """Named in `TIMOTHY_OWNER_IDS`, and nothing else (ADR 0011)."""
-    for path in ("/ops/overview", "/ops/activity", "/ops/failures", "/ops/jobs"):
+    for path in OPS_PATHS:
         assert pool.get(path, headers=headers(OWNER)).status_code == 200, path
 
 
@@ -108,13 +121,13 @@ def test_owning_the_pools_does_not_mean_running_timothy(pool: TestClient) -> Non
     """The whole point of the change. Administering the management server makes somebody
     responsible for the pools, not for the deployment — and this view exposes the queue,
     every server's failures, and what the settings actually are."""
-    for path in ("/ops/overview", "/ops/activity", "/ops/failures", "/ops/jobs"):
+    for path in OPS_PATHS:
         assert pool.get(path, headers=headers(POOL_MANAGER)).status_code == 403, path
 
 
 def test_a_guild_administrator_may_not_look(pool: TestClient) -> None:
     """Running their own server is not running Timothy either."""
-    for path in ("/ops/overview", "/ops/activity", "/ops/failures", "/ops/jobs"):
+    for path in OPS_PATHS:
         assert pool.get(path, headers=headers(GUILD_ADMIN)).status_code == 403, path
 
 
@@ -517,3 +530,172 @@ def test_a_guild_timothy_has_left_still_reports_its_failures(
 
 def test_nothing_failing_is_an_empty_list(pool: TestClient) -> None:
     assert pool.get("/ops/failures", headers=headers(OWNER)).json() == []
+
+
+# -- every guild's settings ------------------------------------------------------------
+
+
+def _configs(client: TestClient, query: str = "") -> Any:  # noqa: ANN401 — the JSON
+    response = client.get(f"/ops/guilds{query}", headers=headers(OWNER))
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _config(client: TestClient, guild_id: int = GUILD) -> Any:  # noqa: ANN401 — the JSON
+    response = client.get(f"/ops/guilds/{guild_id}", headers=headers(OWNER))
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_the_operator_sees_every_guild_and_not_only_their_own(pool: TestClient) -> None:
+    """The whole reason this exists. `/guilds` answers with the caller's own servers, and
+    the owner has none — they are in no guild at all, so that route refuses them outright
+    (ADR 0011). Correct there, and useless when the report is "Timothy is not banning in
+    my server"."""
+    assert pool.get("/guilds", headers=headers(OWNER)).status_code == 403
+
+    assert [config["guild_id"] for config in _configs(pool)] == [
+        str(MANAGEMENT_GUILD),
+        str(GUILD),
+    ]
+
+
+def test_a_guild_administrator_may_not_read_the_deployments_inventory(
+    pool: TestClient,
+) -> None:
+    """Administering one server does not come with a list of everybody else's."""
+    assert pool.get("/ops/guilds", headers=headers(GUILD_ADMIN)).status_code == 403
+    assert pool.get(f"/ops/guilds/{GUILD}", headers=headers(GUILD_ADMIN)).status_code == 403
+
+
+def test_the_inventory_counts_subscriptions_by_level(pool: TestClient) -> None:
+    """Ban and warn are counted apart because they are the configuration mistake: a guild
+    that believes it is enforcing and is subscribed at warn looks identical to one that is
+    working, right up until nobody is banned."""
+    pool.post("/pools", json={"name": "raids"}, headers=headers(POOL_MANAGER))
+    _subscribe(pool, "ban")
+    pool.put(
+        f"/guilds/{GUILD}/subscriptions/raids",
+        json={"level": "warn"},
+        headers=headers(GUILD_ADMIN),
+    )
+
+    config = next(row for row in _configs(pool) if row["guild_id"] == str(GUILD))
+
+    assert config["ban_subscriptions"] == 1
+    assert config["warn_subscriptions"] == 1
+
+
+def test_the_inventory_reports_exceptions_and_the_notification_channel(
+    pool: TestClient,
+) -> None:
+    pool.put(f"/guilds/{GUILD}/exceptions/{LISTED_USER}", json={}, headers=headers(GUILD_ADMIN))
+    pool.put(
+        f"/guilds/{GUILD}/notification-channel",
+        json={"channel_id": str(CHANNEL)},
+        headers=headers(GUILD_ADMIN),
+    )
+
+    config = next(row for row in _configs(pool) if row["guild_id"] == str(GUILD))
+
+    assert config["exceptions"] == 1
+    assert config["notification_channel_id"] == str(CHANNEL)
+
+
+def test_a_guild_that_has_configured_nothing_says_so_in_zeroes(pool: TestClient) -> None:
+    """Absent rows, not missing keys: a guild with no subscriptions is the answer to
+    "why is nothing happening there", and it has to be readable off the row."""
+    config = next(row for row in _configs(pool) if row["guild_id"] == str(GUILD))
+
+    assert config["ban_subscriptions"] == 0
+    assert config["warn_subscriptions"] == 0
+    assert config["exceptions"] == 0
+    assert config["notification_channel_id"] is None
+
+
+def test_the_inventory_reports_a_paused_guild(pool: TestClient) -> None:
+    """The pause nobody remembers setting, which is the everyday answer to "Timothy has
+    stopped banning here"."""
+    pool.patch(
+        f"/guilds/{GUILD}", json={"enforcement_paused": True}, headers=headers(GUILD_ADMIN)
+    )
+
+    config = next(row for row in _configs(pool) if row["guild_id"] == str(GUILD))
+
+    assert config["enforcement_paused"] is True
+
+
+def test_the_inventory_can_be_searched_by_name_or_by_id(pool: TestClient) -> None:
+    """Both, because an operator has one or the other: a name from the person reporting
+    the problem, or an ID from a log line."""
+    pool.put(f"/guilds/{GUILD}", json={"name": "Neon Atrium"}, headers=headers("system"))
+
+    assert [row["guild_id"] for row in _configs(pool, "?q=atrium")] == [str(GUILD)]
+    assert [row["guild_id"] for row in _configs(pool, f"?q={GUILD}")] == [str(GUILD)]
+    assert _configs(pool, "?q=nowhere") == []
+
+
+def test_a_guild_with_no_name_yet_sorts_last_rather_than_first(pool: TestClient) -> None:
+    """A `NULL` name means the gateway has not mentioned the guild since it was
+    registered. That is a curiosity, not the top of the list."""
+    pool.put(f"/guilds/{GUILD}", json={"name": "Neon Atrium"}, headers=headers("system"))
+
+    assert [row["name"] for row in _configs(pool)] == ["Neon Atrium", None]
+
+
+def test_one_guilds_settings_come_back_in_full(pool: TestClient) -> None:
+    """The four administrator-only routes `GuildDetail` assembles, in one call, for a
+    reader who administers nothing."""
+    _subscribe(pool)
+    pool.put(
+        f"/guilds/{GUILD}/exceptions/{LISTED_USER}",
+        json={"reason": "known good"},
+        headers=headers(GUILD_ADMIN),
+    )
+    pool.put(
+        f"/guilds/{GUILD}/notification-channel",
+        json={"channel_id": str(CHANNEL)},
+        headers=headers(GUILD_ADMIN),
+    )
+
+    config = _config(pool)
+
+    assert config["guild"]["guild_id"] == str(GUILD)
+    assert [(row["pool_name"], row["level"]) for row in config["subscriptions"]] == [
+        ("spam", "ban")
+    ]
+    assert [(row["user_id"], row["reason"]) for row in config["exceptions"]] == [
+        (str(LISTED_USER), "known good")
+    ]
+    assert config["notification_channel"]["channel_id"] == str(CHANNEL)
+
+
+def test_a_guild_that_has_nominated_no_channel_says_none(pool: TestClient) -> None:
+    """Distinct from an empty list: there is one channel or there is not one, and a
+    warn-level subscription with no channel reports to nowhere."""
+    config = _config(pool)
+
+    assert config["notification_channel"] is None
+    assert config["subscriptions"] == []
+    assert config["exceptions"] == []
+
+
+def test_a_guild_timothy_is_not_in_is_a_404(pool: TestClient) -> None:
+    """Not an empty configuration. "Timothy is not in that server" is the answer to the
+    question, and an empty page reads as "configured with nothing"."""
+    response = pool.get(f"/ops/guilds/{OTHER_GUILD}", headers=headers(OWNER))
+
+    assert response.status_code == 404
+
+
+def test_reading_a_guilds_settings_costs_no_discord_call(
+    pool: TestClient, discord: FakeDiscord
+) -> None:
+    """The owner's standing is configuration, and the settings are Timothy's own rows.
+    Nothing here should be asking Discord about a hundred guilds."""
+    discord.calls.clear()
+
+    _configs(pool)
+    _config(pool)
+
+    assert discord.calls == []

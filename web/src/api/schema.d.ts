@@ -816,6 +816,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/guilds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Guild Configs
+         * @description Every guild Timothy is in and how each one is configured, whoever is asking.
+         *
+         *     `/guilds` answers a different question and keeps its answer: it lists the guilds the
+         *     caller administers, because it is the front door of a web UI for administrators. The
+         *     operator administers nothing (ADR 0011) and gets an empty list there — which is
+         *     correct, and useless when the report is "Timothy is not banning in my server" and the
+         *     answer turns out to be a pause nobody remembers setting.
+         *
+         *     Unpaged on purpose. This is the deployment's inventory, bounded by how many guilds
+         *     Timothy is in, and a page boundary through "all guild settings" would quietly answer
+         *     a different question than the one asked.
+         *
+         *     Four queries rather than one per guild: the aggregates are grouped in SQL and joined
+         *     up here, because a hundred guilds each fetching their own counts is a hundred round
+         *     trips to draw one table.
+         */
+        get: operations["read_guild_configs_ops_guilds_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/guilds/{guild_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Guild Config
+         * @description One guild's settings in full, whoever is asking.
+         *
+         *     Everything the guild's own administrators configured, assembled here so that reading
+         *     it costs one call rather than four — this is the "why is this server behaving like
+         *     that" screen, and the answer is usually the shape of the whole configuration rather
+         *     than any one row of it.
+         *
+         *     Read-only, and there is deliberately no operator write beside it. Being able to see
+         *     a guild's settings to explain them is not authority over them: a subscription belongs
+         *     to the guild that holds it (ADR 0001), and an operator who changes one has made a
+         *     change its administrators never made and cannot see the reason for.
+         */
+        get: operations["read_guild_config_ops_guilds__guild_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/jobs": {
         parameters: {
             query?: never;
@@ -1169,6 +1233,53 @@ export interface components {
             guild_id: string;
             /** User Id */
             user_id: string;
+        };
+        /**
+         * GuildConfigRead
+         * @description Everything one guild's administrators have configured, in one call.
+         *
+         *     The same four things `GuildDetail` assembles from four administrator-only routes, for
+         *     a reader who administers nothing (ADR 0011). Settings only: what Timothy has *done*
+         *     in a guild is enforcement, and what Discord will *let* it do is diagnostics, and both
+         *     have their own routes with their own audiences.
+         */
+        GuildConfigRead: {
+            guild: components["schemas"]["GuildRead"];
+            /** Subscriptions */
+            subscriptions: components["schemas"]["SubscriptionRead"][];
+            /** Exceptions */
+            exceptions: components["schemas"]["ExceptionRead"][];
+            notification_channel: components["schemas"]["NotificationChannelRead"] | null;
+        };
+        /**
+         * GuildConfigSummary
+         * @description One guild's configuration, reduced to what fits on a row.
+         *
+         *     The counts rather than the things counted: a hundred-odd guilds, each with its own
+         *     exceptions, is a payload nobody reads and a screen nobody scans. What this is for is
+         *     spotting the guild worth opening — the one that is paused, or subscribed to nothing,
+         *     or has notifications pointed nowhere — and :class:`GuildConfigRead` is the opening.
+         */
+        GuildConfigSummary: {
+            /** Guild Id */
+            guild_id: string;
+            /** Name */
+            name: string | null;
+            /**
+             * Joined At
+             * Format: date-time
+             */
+            joined_at: string;
+            /** Enforcement Paused */
+            enforcement_paused: boolean;
+            /** Ban Subscriptions */
+            ban_subscriptions: number;
+            /** Warn Subscriptions */
+            warn_subscriptions: number;
+            /** Exceptions */
+            exceptions: number;
+            /** Notification Channel Id */
+            notification_channel_id: string | null;
         };
         /**
          * GuildDiagnosticsRead
@@ -3105,6 +3216,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FailureGroup"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_guild_configs_ops_guilds_get: {
+        parameters: {
+            query?: {
+                /** @description Match against the guild's name or its ID, as text. */
+                q?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuildConfigSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_guild_config_ops_guilds__guild_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A Discord guild ID. */
+                guild_id: string;
+            };
+            cookie?: {
+                /** @description A browser session. */
+                timothy_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuildConfigRead"];
                 };
             };
             /** @description Validation Error */

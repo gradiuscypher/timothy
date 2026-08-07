@@ -12,6 +12,7 @@ import { Guilds } from "@/routes/Guilds";
 import { Home } from "@/routes/Home";
 import { Jobs } from "@/routes/Jobs";
 import { Ops } from "@/routes/Ops";
+import { OpsGuild, OpsGuilds } from "@/routes/OpsGuilds";
 import { PoolDetail } from "@/routes/PoolDetail";
 import { Pools } from "@/routes/Pools";
 import { UserLookup } from "@/routes/UserLookup";
@@ -20,7 +21,7 @@ import { UserLookup } from "@/routes/UserLookup";
  * Routes, declared in code rather than generated from the filesystem.
  *
  * File-based routing needs the router's own Vite plugin and a generated tree checked in
- * beside the routes it was generated from. There are nine routes. Declaring them is
+ * beside the routes it was generated from. There are a dozen routes. Declaring them is
  * shorter than explaining the generated file, and it keeps the build to Vite, React and
  * Tailwind.
  *
@@ -118,6 +119,23 @@ const auditRoute = createRoute({
   component: AuditLog,
 });
 
+const opsGuildsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/ops/guilds",
+  // Six columns of configuration across every server Timothy is in.
+  staticData: { layout: "wide" },
+  component: OpsGuilds,
+});
+
+const opsGuildRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/ops/guilds/$guildId",
+  component: function OpsGuildRoute() {
+    const { guildId } = opsGuildRoute.useParams();
+    return <OpsGuild key={guildId} guildId={guildId} />;
+  },
+});
+
 const jobsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/ops/jobs",
@@ -136,6 +154,8 @@ export const routeTree = rootRoute.addChildren([
   route(auditRoute),
   route(opsRoute),
   route(jobsRoute),
+  route(opsGuildsRoute),
+  route(opsGuildRoute),
 ]);
 
 export function makeRouter() {
