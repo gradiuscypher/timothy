@@ -297,7 +297,15 @@ const TONES = {
   ban: "bg-danger/15 text-danger",
   warn: "bg-warn/15 text-warn",
   ok: "bg-ok/15 text-ok",
+  active: "bg-accent/15 text-accent",
 } as const;
+/**
+ * `active` is for something happening right now, and it is the accent rather than a
+ * fifth hue on purpose: green would read as finished well, amber as a problem, and the
+ * only honest thing to say about work in flight is that it is the one row worth looking
+ * at. The accent is already what this palette uses for "here" (styles.css), and it
+ * carries its own light, dark and high-contrast values.
+ */
 
 export function Badge({
   tone = "neutral",

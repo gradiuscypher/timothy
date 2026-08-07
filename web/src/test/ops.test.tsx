@@ -628,3 +628,51 @@ describe("acting on a queued job", () => {
     expect(within(card).queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
   });
 });
+
+describe("reading the queue at a glance", () => {
+  /** One job per status, so the badges can be compared against each other. */
+  function withStatuses() {
+    const base = {
+      kind: "enforce_guild",
+      payload: { guild_id: "1" },
+      run_after: "2026-08-07T00:00:00Z",
+      attempts: 0,
+      last_error: null,
+      created_at: "2026-08-07T00:00:00Z",
+    };
+    server.use(
+      get("/auth/me", OWNER),
+      get("/ops/jobs", [
+        { ...base, id: 1, status: "pending" },
+        { ...base, id: 2, status: "running" },
+        { ...base, id: 3, status: "done" },
+        { ...base, id: 4, status: "failed" },
+      ] as never),
+    );
+    return renderApp("/ops/jobs");
+  }
+
+  it("does not draw the job in flight the same as the ones waiting", async () => {
+    // A staggered sweep leaves most of a healthy queue pending, so a page where the one
+    // row actually moving looks like the hundred behind it answers the wrong question.
+    withStatuses();
+
+    const card = await screen.findByRole("region", { name: "Jobs" });
+    const running = await within(card).findByText("running");
+    const pending = within(card).getByText("pending");
+
+    expect(running.className).not.toEqual(pending.className);
+  });
+
+  it("keeps every status visually distinct from every other", async () => {
+    withStatuses();
+
+    const card = await screen.findByRole("region", { name: "Jobs" });
+    await within(card).findByText("running");
+    const classes = ["pending", "running", "done", "failed"].map(
+      (status) => within(card).getByText(status).className,
+    );
+
+    expect(new Set(classes).size).toBe(classes.length);
+  });
+});

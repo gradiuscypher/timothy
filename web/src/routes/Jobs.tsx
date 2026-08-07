@@ -103,6 +103,25 @@ function delay(seconds: number): string {
   return `${Math.round(seconds / 86400)}d`;
 }
 
+/**
+ * Each status its own colour, because this column is scanned rather than read.
+ *
+ * `running` is the one that had to change: it shared the grey of `pending`, so the single
+ * row the queue is actually working on looked exactly like the hundred waiting behind it.
+ * A staggered sweep means most of a healthy queue is `pending`, and a page where
+ * everything is grey answers the wrong question — what is *moving* is the whole reason
+ * somebody opened it.
+ */
+const STATUS_TONE: Record<JobStatus, "neutral" | "ok" | "ban" | "active"> = {
+  pending: "neutral",
+  running: "active",
+  done: "ok",
+  failed: "ban",
+  // Terminal but not a failure, and deliberately quiet: nothing went wrong, somebody
+  // decided this would not run.
+  cancelled: "neutral",
+};
+
 const PAGE_SIZE = 50;
 
 export function Jobs() {
@@ -195,13 +214,7 @@ export function Jobs() {
               <Row key={job.id}>
                 <Cell className="whitespace-nowrap">{job.kind}</Cell>
                 <Cell>
-                  <Badge
-                    tone={
-                      job.status === "failed" ? "ban" : job.status === "done" ? "ok" : "neutral"
-                    }
-                  >
-                    {job.status}
-                  </Badge>
+                  <Badge tone={STATUS_TONE[job.status]}>{job.status}</Badge>
                 </Cell>
                 <Cell className="tabular-nums">{job.attempts}</Cell>
                 <Cell>
